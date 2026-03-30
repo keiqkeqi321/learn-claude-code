@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from typing import Any
 
@@ -32,6 +33,7 @@ from openagent.storage.jobs import JobStore
 from openagent.storage.sessions import SessionStore
 from openagent.storage.tasks import TaskStore
 from openagent.storage.team import TeamStore
+from openagent.storage.tool_logs import ToolLogStore
 from openagent.storage.transcripts import TranscriptStore
 from openagent.tools.background import BackgroundManager, register_background_tools
 from openagent.tools.filesystem import edit_file, read_file, register_filesystem_tools, write_file
@@ -45,6 +47,10 @@ from openagent.tools.todo import TodoManager, register_todo_tool
 
 
 class OpenAgentRuntime:
+    TOOL_RESULT_PREVIEW_LINES = 20
+    TOOL_PREVIEW_LINE_WIDTH = 160
+    _ansi_output_enabled: bool | None = None
+
     """OpenAgent 运行时类.
 
     管理代理的完整运行时环境，包括工具、会话、任务等。
@@ -82,6 +88,7 @@ class OpenAgentRuntime:
         self.session_manager = SessionManager(SessionStore(settings.storage.sessions_dir), self.transcript_store)
         self.task_store = TaskStore(settings.storage.tasks_dir)
         self.job_store = JobStore(settings.storage.jobs_dir)
+        self.tool_log_store = ToolLogStore(settings.storage.logs_dir)
         self.inbox_store = InboxStore(settings.storage.inbox_dir)
         self.bus = MessageBus(self.inbox_store)
         self.team_store = TeamStore(settings.storage.team_dir)
@@ -107,6 +114,135 @@ class OpenAgentRuntime:
         self.worker_registry = ToolRegistry()
         self._register_core_tools(self.registry)
         self.register_worker_tools(self.worker_registry)
+
+    def print_tool_event(self, actor: str, tool_name: str, tool_input: dict[str, Any], output: Any) -> str:
+        category = "MCP" if tool_name.startswith("mcp__") else "TOOL"
+        log_entry = self.tool_log_store.write(
+            actor=actor,
+            tool_name=tool_name,
+            tool_input=tool_input,
+            output=output,
+            category=category,
+        )
+        if not sys.stdout.isatty():
+            return log_entry["id"]
+        border = self._tool_border(f"{'=' * 18} {category} {actor} {'=' * 18}", category)
+        name_line = f"Name: {tool_name}"
+        args_text = self._stringify_tool_value(tool_input)
+        result_text = self._stringify_tool_value(output)
+        args_preview, args_hidden = self._preview_tool_text(args_text)
+        result_preview, result_hidden = self._preview_tool_text(
+            result_text,
+            max_chars=self.settings.runtime.max_tool_output_chars,
+        )
+        has_hidden_content = args_hidden or result_hidden
+        print()
+        print(border)
+        if has_hidden_content:
+            print(f"View by: /toollog {log_entry['id']}")
+        print(name_line)
+        print("Args:")
+        print(args_preview)
+        print("Result:")
+        print(result_preview)
+        print(self._tool_border("=" * len("================== TOOL lead =================="), category))
+        print()
+        return log_entry["id"]
+
+    def _tool_border(self, text: str, category: str) -> str:
+        if not self._supports_ansi_output():
+            return text
+        color = "\x1b[38;5;214m" if category == "MCP" else "\x1b[38;5;111m"
+        return f"{color}{text}\x1b[0m"
+
+    def _supports_ansi_output(self) -> bool:
+        if self._ansi_output_enabled is not None:
+            return self._ansi_output_enabled
+        if not sys.stdout.isatty():
+            self._ansi_output_enabled = False
+            return False
+        if sys.platform != "win32":
+            self._ansi_output_enabled = True
+            return True
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)
+            if handle in (0, -1):
+                self._ansi_output_enabled = False
+                return False
+            mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) == 0:
+                self._ansi_output_enabled = False
+                return False
+            enable_vt = 0x0004
+            if mode.value & enable_vt:
+                self._ansi_output_enabled = True
+                return True
+            self._ansi_output_enabled = kernel32.SetConsoleMode(handle, mode.value | enable_vt) != 0
+            return self._ansi_output_enabled
+        except Exception:
+            self._ansi_output_enabled = False
+            return False
+
+    def _stringify_tool_value(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        except TypeError:
+            return str(value)
+
+    def _preview_tool_text(self, text: str, *, max_chars: int | None = None) -> tuple[str, bool]:
+        hidden = False
+        if max_chars is not None and len(text) > max_chars:
+            text = text[:max_chars] + "\n... [truncated]"
+            hidden = True
+        raw_lines = text.splitlines() or [text]
+        lines: list[str] = []
+        for line in raw_lines:
+            preview_line, line_hidden = self._truncate_preview_line(line)
+            hidden = hidden or line_hidden
+            lines.append(preview_line)
+        if not lines:
+            return "(no output)", hidden
+        if len(lines) <= self.TOOL_RESULT_PREVIEW_LINES:
+            return "\n".join(lines), hidden
+        preview = "\n".join(lines[: self.TOOL_RESULT_PREVIEW_LINES])
+        return preview + "\n...", True
+
+    def _truncate_preview_line(self, line: str) -> tuple[str, bool]:
+        if len(line) <= self.TOOL_PREVIEW_LINE_WIDTH:
+            return line, False
+        return line[: self.TOOL_PREVIEW_LINE_WIDTH - 3] + "...", True
+
+    def recent_tool_logs(self, limit: int = 10) -> str:
+        entries = self.tool_log_store.list_recent(limit=limit)
+        if not entries:
+            return "No tool logs yet."
+        lines: list[str] = []
+        for entry in entries:
+            lines.append(f"- {entry['id']} [{entry['category']}] {entry['actor']} -> {entry['tool_name']}")
+        return "\n".join(lines)
+
+    def render_tool_log(self, log_id: str) -> str:
+        entry = self.tool_log_store.get(log_id)
+        if entry is None:
+            return f"Tool log '{log_id}' not found."
+        args_text = json.dumps(entry["tool_input"], ensure_ascii=False, indent=2)
+        return "\n".join(
+            [
+                f"[tool log {entry['id']}]",
+                f"Category: {entry['category']}",
+                f"Actor: {entry['actor']}",
+                f"Tool: {entry['tool_name']}",
+                "Args:",
+                args_text,
+                "Result:",
+                str(entry["output"]),
+            ]
+        )
 
     def _make_provider(self) -> LLMProvider:
         if self.settings.provider.name == "openai":
@@ -383,6 +519,7 @@ class OpenAgentRuntime:
                     output = self.registry.execute(ctx, tool_call.name, tool_call.input)
                 except Exception as exc:
                     output = f"Error: {exc}"
+                self.print_tool_event("lead", tool_call.name, tool_call.input, output)
                 result = {
                     "type": "tool_result",
                     "tool_call_id": tool_call.id,

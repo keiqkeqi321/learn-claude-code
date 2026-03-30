@@ -165,6 +165,7 @@ class TeammateRuntimeManager:
                             except Exception as exc:
                                 output = f"Error: {exc}"
                                 self._update_member(name, last_error=str(exc))
+                        self.runtime.print_tool_event(name, tool_call.name, tool_call.input, output)
                         tool_results.append(
                             {
                                 "type": "tool_result",

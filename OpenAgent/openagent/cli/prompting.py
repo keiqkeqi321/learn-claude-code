@@ -11,6 +11,7 @@ from prompt_toolkit.completion import Completion, Completer
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.formatted_text import FormattedText
 
 COMMAND_SPECS = [
     ("/compact", "Compact the current session context"),
@@ -18,6 +19,7 @@ COMMAND_SPECS = [
     ("/team", "Show teammate roster and states"),
     ("/inbox", "Read the lead inbox"),
     ("/mcp", "Show configured MCP servers and tools"),
+    ("/toollog", "Show recent tool logs or expand one by id"),
     ("/bg", "Show background jobs"),
     ("/help", "Show available REPL commands"),
     ("/exit", "Exit chat mode"),
@@ -32,6 +34,16 @@ IGNORED_DIR_NAMES = {
 }
 
 TOKEN_PATTERN = re.compile(r"(?:^|\s)([@/])([^\s]*)$")
+PROMPT_TEXT = "openagent >> "
+PROMPT_ANSI = "\x1b[38;5;45mopenagent\x1b[0m \x1b[38;5;244m>>\x1b[0m "
+PROMPT_FORMATTED = FormattedText(
+    [
+        ("#00afff bold", "openagent"),
+        ("", " "),
+        ("#808080", ">>"),
+        ("", " "),
+    ]
+)
 
 
 @dataclass(slots=True)
@@ -191,3 +203,11 @@ def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
         complete_style=CompleteStyle.MULTI_COLUMN,
         key_bindings=bindings,
     )
+
+
+def styled_prompt_message():
+    return PROMPT_FORMATTED
+
+
+def fallback_prompt_message() -> str:
+    return PROMPT_ANSI
