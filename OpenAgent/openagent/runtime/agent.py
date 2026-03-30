@@ -195,11 +195,19 @@ class OpenAgentRuntime:
         return f"Submitted plan request {request['request_id']}"
 
     def build_system_prompt(self, actor: str = "lead", role: str = "lead coding agent") -> str:
+        if actor == "lead":
+            return (
+                f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
+                "Use tools to solve coding tasks. Prefer task_create/task_update/task_list for longer work.\n"
+                "Use TodoWrite for short checklists. Use task for isolated subagent work. Use load_skill only when needed.\n"
+                "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
+                f"Available skills:\n{self.skill_loader.descriptions()}"
+            )
         return (
             f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
-            "Use tools to solve coding tasks. Prefer task_create/task_update/task_list for longer work.\n"
-            "Use TodoWrite for short checklists. Use task for isolated subagent work. Use load_skill only when needed.\n"
-            "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
+            "You are a persistent teammate following the s11 work/idle loop.\n"
+            "Use tools to complete current work, send messages when needed, and call idle when you have finished the current unit of work.\n"
+            "While idle you may be resumed by inbox messages or unclaimed tasks.\n"
             f"Available skills:\n{self.skill_loader.descriptions()}"
         )
 
@@ -209,7 +217,13 @@ class OpenAgentRuntime:
     def latest_session(self) -> AgentSession:
         return self.session_manager.latest_or_create()
 
-    def complete(self, system_prompt: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]):
+    def complete(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        text_callback=None,
+    ):
         last_error: Exception | None = None
         for _ in range(3):
             try:
@@ -218,6 +232,7 @@ class OpenAgentRuntime:
                     messages=messages,
                     tools=tools,
                     max_tokens=self.settings.provider.max_tokens,
+                    text_callback=text_callback,
                 )
             except Exception as exc:
                 last_error = exc
@@ -316,12 +331,12 @@ class OpenAgentRuntime:
         session.messages = self.compact_manager.auto_compact(session.id, session.messages)
         self.session_manager.save(session)
 
-    def run_turn(self, session: AgentSession, user_input: str) -> str:
+    def run_turn(self, session: AgentSession, user_input: str, text_callback=None) -> str:
         session.messages.append(make_user_text_message(user_input))
         self.transcript_store.append(session.id, {"role": "user", "content": user_input})
-        return self._agent_loop(session)
+        return self._agent_loop(session, text_callback=text_callback)
 
-    def _agent_loop(self, session: AgentSession) -> str:
+    def _agent_loop(self, session: AgentSession, text_callback=None) -> str:
         final_text = ""
         for _ in range(self.settings.runtime.max_agent_rounds):
             microcompact(session.messages)
@@ -337,7 +352,12 @@ class OpenAgentRuntime:
             if inbox:
                 session.messages.append(make_user_text_message(f"<inbox>{json.dumps(inbox, ensure_ascii=False, indent=2)}</inbox>"))
 
-            turn = self.complete(self.build_system_prompt(), session.messages, self.registry.schemas())
+            turn = self.complete(
+                self.build_system_prompt(),
+                session.messages,
+                self.registry.schemas(),
+                text_callback=text_callback,
+            )
             session.latest_turn_id = uuid.uuid4().hex[:8]
             assistant_message = turn.as_message()
             session.messages.append(assistant_message)

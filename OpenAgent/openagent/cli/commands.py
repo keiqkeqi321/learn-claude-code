@@ -5,6 +5,21 @@ import json
 from openagent.runtime.agent import OpenAgentRuntime
 
 
+class ConsoleStreamer:
+    def __init__(self) -> None:
+        self.has_output = False
+
+    def __call__(self, text: str) -> None:
+        if not text:
+            return
+        print(text, end="", flush=True)
+        self.has_output = True
+
+    def finish(self) -> None:
+        if self.has_output:
+            print()
+
+
 def cmd_chat(runtime: OpenAgentRuntime) -> int:
     from openagent.cli.repl import run_repl
 
@@ -13,8 +28,11 @@ def cmd_chat(runtime: OpenAgentRuntime) -> int:
 
 def cmd_run(runtime: OpenAgentRuntime, prompt: str) -> int:
     session = runtime.create_session()
-    result = runtime.run_turn(session, prompt)
-    if result:
+    streamer = ConsoleStreamer()
+    result = runtime.run_turn(session, prompt, text_callback=streamer)
+    if streamer.has_output:
+        streamer.finish()
+    elif result:
         print(result)
     return 0
 

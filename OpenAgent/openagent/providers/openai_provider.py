@@ -6,7 +6,7 @@ import urllib.request
 from typing import Any
 
 from openagent.config.models import ProviderSettings
-from openagent.providers.base import LLMProvider, ProviderError
+from openagent.providers.base import LLMProvider, ProviderError, TextCallback
 from openagent.runtime.messages import AssistantTurn, ToolCall
 
 
@@ -80,6 +80,7 @@ class OpenAIProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        text_callback: TextCallback | None = None,
     ) -> AssistantTurn:
         url = f"{self.settings.base_url.rstrip('/')}/chat/completions"
         payload = {
@@ -88,6 +89,7 @@ class OpenAIProvider(LLMProvider):
             "tools": [_schema_to_openai_tool(tool) for tool in tools],
             "tool_choice": "auto",
             "max_tokens": max_tokens,
+            "stream": bool(text_callback),
         }
         headers = {
             "Authorization": f"Bearer {self.settings.api_key}",
@@ -103,7 +105,10 @@ class OpenAIProvider(LLMProvider):
         )
         try:
             with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
+                if text_callback is None:
+                    body = json.loads(response.read().decode("utf-8"))
+                else:
+                    body = self._read_streaming_response(response, text_callback)
         except urllib.error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="replace")
             raise ProviderError(f"OpenAI request failed: {exc.code} {details}") from exc
@@ -139,3 +144,60 @@ class OpenAIProvider(LLMProvider):
             tool_calls=tool_calls,
             raw_response=body,
         )
+
+    def _read_streaming_response(self, response, text_callback: TextCallback) -> dict[str, Any]:
+        aggregated_message: dict[str, Any] = {"role": "assistant", "content": "", "tool_calls": []}
+        tool_calls_by_index: dict[int, dict[str, Any]] = {}
+        finish_reason = "stop"
+
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            event = json.loads(data)
+            choice = event["choices"][0]
+            delta = choice.get("delta", {})
+            finish_reason = choice.get("finish_reason") or finish_reason
+
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                aggregated_message["content"] += content
+                text_callback(content)
+            elif isinstance(content, list):
+                for item in content:
+                    if item.get("type") == "text":
+                        text = item.get("text", "")
+                        if text:
+                            aggregated_message["content"] += text
+                            text_callback(text)
+
+            for tool_delta in delta.get("tool_calls", []):
+                index = int(tool_delta.get("index", 0))
+                current = tool_calls_by_index.setdefault(
+                    index,
+                    {
+                        "id": tool_delta.get("id", ""),
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    },
+                )
+                if tool_delta.get("id"):
+                    current["id"] = tool_delta["id"]
+                function_delta = tool_delta.get("function", {})
+                if function_delta.get("name"):
+                    current["function"]["name"] = function_delta["name"]
+                if function_delta.get("arguments"):
+                    current["function"]["arguments"] += function_delta["arguments"]
+
+        aggregated_message["tool_calls"] = [tool_calls_by_index[index] for index in sorted(tool_calls_by_index)]
+        return {
+            "choices": [
+                {
+                    "message": aggregated_message,
+                    "finish_reason": finish_reason,
+                }
+            ]
+        }

@@ -5,7 +5,7 @@ from typing import Any
 from anthropic import Anthropic
 
 from openagent.config.models import ProviderSettings
-from openagent.providers.base import LLMProvider
+from openagent.providers.base import LLMProvider, TextCallback
 from openagent.runtime.messages import AssistantTurn, ToolCall
 
 
@@ -59,14 +59,22 @@ class AnthropicProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        text_callback: TextCallback | None = None,
     ) -> AssistantTurn:
-        response = self.client.messages.create(
-            model=self.settings.model,
-            system=system_prompt,
-            messages=_to_anthropic_messages(messages),
-            tools=tools,
-            max_tokens=max_tokens,
-        )
+        request_kwargs = {
+            "model": self.settings.model,
+            "system": system_prompt,
+            "messages": _to_anthropic_messages(messages),
+            "tools": tools,
+            "max_tokens": max_tokens,
+        }
+        if text_callback is None:
+            response = self.client.messages.create(**request_kwargs)
+        else:
+            with self.client.messages.stream(**request_kwargs) as stream:
+                for text in stream.text_stream:
+                    text_callback(text)
+                response = stream.get_final_message()
         text_blocks: list[str] = []
         tool_calls: list[ToolCall] = []
         for block in response.content:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from openagent.cli.commands import ConsoleStreamer
+
 
 def run_repl(runtime) -> int:
     session = runtime.create_session()
@@ -38,8 +40,12 @@ def run_repl(runtime) -> int:
         if stripped == "/help":
             print("/compact /tasks /team /inbox /bg /help /exit")
             continue
-        response = runtime.run_turn(session, query)
-        if response:
+        streamer = ConsoleStreamer()
+        response = runtime.run_turn(session, query, text_callback=streamer)
+        if streamer.has_output:
+            streamer.finish()
+            print()
+        elif response:
             print(response)
             print()
     return 0

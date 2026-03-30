@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 
 from openagent.runtime.messages import AssistantTurn, NormalizedMessage
 
 
 class ProviderError(RuntimeError):
     """Raised when a provider request fails."""
+
+
+TextCallback = Callable[[str], None]
 
 
 class LLMProvider(ABC):
@@ -19,6 +22,7 @@ class LLMProvider(ABC):
         messages: list[NormalizedMessage],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        text_callback: TextCallback | None = None,
     ) -> AssistantTurn:
         raise NotImplementedError
 
