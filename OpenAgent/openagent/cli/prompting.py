@@ -8,7 +8,7 @@ import time
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completion, Completer
-from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import CompleteStyle
 
@@ -138,6 +138,12 @@ class OpenAgentCompleter(Completer):
         self._last_scan_at = now
 
 
+def _history_file(workspace_root: Path) -> Path:
+    history_dir = workspace_root / ".openagent"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    return history_dir / "repl_history.txt"
+
+
 def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
     bindings = KeyBindings()
 
@@ -160,8 +166,24 @@ def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
             buffer.cancel_completion()
             return
 
+    @bindings.add("up")
+    def _handle_up(event) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state:
+            buffer.complete_previous()
+            return
+        buffer.auto_up()
+
+    @bindings.add("down")
+    def _handle_down(event) -> None:
+        buffer = event.current_buffer
+        if buffer.complete_state:
+            buffer.complete_next()
+            return
+        buffer.auto_down()
+
     return PromptSession(
-        history=InMemoryHistory(),
+        history=FileHistory(str(_history_file(workspace_root))),
         auto_suggest=AutoSuggestFromHistory(),
         completer=OpenAgentCompleter(workspace_root),
         complete_while_typing=True,

@@ -11,7 +11,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", default=".", help="Workspace root for the agent.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("chat", help="Start interactive chat mode.")
+    chat_parser = subparsers.add_parser("chat", help="Start interactive chat mode.")
+    chat_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the latest persisted chat session instead of starting a new one.",
+    )
 
     run_parser = subparsers.add_parser("run", help="Run a single prompt.")
     run_parser.add_argument("prompt", help="Prompt to execute.")
@@ -43,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         if args.command == "chat":
-            return cmd_chat(runtime)
+            return cmd_chat(runtime, resume=getattr(args, "resume", False))
         if args.command == "run":
             return cmd_run(runtime, args.prompt)
         if args.command == "tasks" and args.tasks_command == "list":

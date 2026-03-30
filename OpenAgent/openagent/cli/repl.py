@@ -4,15 +4,44 @@ import json
 
 from openagent.cli.commands import ConsoleStreamer
 from openagent.cli.prompting import COMMAND_SPECS, create_prompt_session
+from openagent.runtime.messages import render_text_content
 
 
-def run_repl(runtime) -> int:
-    session = runtime.create_session()
+def _print_resumed_history(session) -> None:
+    visible_messages: list[tuple[str, str]] = []
+    for message in session.messages:
+        role = message.get("role")
+        content = message.get("content")
+        if role == "user":
+            if not isinstance(content, str):
+                continue
+            if content.startswith("<background-results>") or content.startswith("<inbox>"):
+                continue
+            visible_messages.append(("You", content))
+            continue
+        if role == "assistant":
+            text = render_text_content(content).strip()
+            if not text:
+                continue
+            visible_messages.append(("Assistant", text))
+    if not visible_messages:
+        print("[resumed session has no visible chat history]")
+        return
+    print("[resumed history]")
+    for speaker, text in visible_messages:
+        print(f"{speaker}: {text}")
+        print()
+
+
+def run_repl(runtime, session, resumed: bool = False) -> int:
     prompt_session = None
     try:
         prompt_session = create_prompt_session(runtime.settings.workspace_root)
     except Exception:
         prompt_session = None
+    print(f"[session {session.id}]")
+    if resumed:
+        _print_resumed_history(session)
     while True:
         try:
             if prompt_session is not None:

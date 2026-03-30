@@ -20,10 +20,11 @@ class ConsoleStreamer:
             print()
 
 
-def cmd_chat(runtime: OpenAgentRuntime) -> int:
+def cmd_chat(runtime: OpenAgentRuntime, resume: bool = False) -> int:
     from openagent.cli.repl import run_repl
 
-    return run_repl(runtime)
+    session = runtime.latest_session() if resume else runtime.create_session()
+    return run_repl(runtime, session, resumed=resume)
 
 
 def cmd_run(runtime: OpenAgentRuntime, prompt: str) -> int:
