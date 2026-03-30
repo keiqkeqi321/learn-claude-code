@@ -6,10 +6,16 @@ from openagent.runtime.agent import OpenAgentRuntime
 
 
 class ConsoleStreamer:
-    def __init__(self, start_on_new_line: bool = False, line_buffered: bool = False) -> None:
+    def __init__(
+        self,
+        start_on_new_line: bool = False,
+        line_buffered: bool = False,
+        on_first_output=None,
+    ) -> None:
         self.has_output = False
         self.start_on_new_line = start_on_new_line
         self.line_buffered = line_buffered
+        self.on_first_output = on_first_output
         self._pending = ""
 
     def __call__(self, text: str) -> None:
@@ -21,6 +27,8 @@ class ConsoleStreamer:
                 return
             before, self._pending = self._pending.rsplit("\n", 1)
             text = before + "\n"
+        if not self.has_output and self.on_first_output is not None:
+            self.on_first_output()
         if self.start_on_new_line and not self.has_output:
             print()
         print(text, end="", flush=True)
@@ -28,6 +36,8 @@ class ConsoleStreamer:
 
     def finish(self) -> None:
         if self.line_buffered and self._pending:
+            if not self.has_output and self.on_first_output is not None:
+                self.on_first_output()
             if self.start_on_new_line and not self.has_output:
                 print()
             print(self._pending, end="", flush=True)

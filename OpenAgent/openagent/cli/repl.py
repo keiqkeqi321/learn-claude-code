@@ -60,6 +60,8 @@ def _print_resumed_history(session) -> None:
 
 
 class TurnQueueRunner:
+    THINKING_TEXT = "AI 思考中..."
+
     def __init__(self, runtime, session, *, stable_prompt: bool = False) -> None:
         self.runtime = runtime
         self.session = session
@@ -69,6 +71,7 @@ class TurnQueueRunner:
         self._worker = Thread(target=self._worker_loop, name="openagent-chat-worker", daemon=True)
         self._active = False
         self._queued = 0
+        self._show_thinking = False
 
     def start(self) -> None:
         self._worker.start()
@@ -123,23 +126,47 @@ class TurnQueueRunner:
             with self._lock:
                 self._queued = max(0, self._queued - 1)
                 self._active = True
-            streamer = ConsoleStreamer(start_on_new_line=True, line_buffered=self.stable_prompt)
+                self._show_thinking = True
+            self._render_thinking()
+            streamer = ConsoleStreamer(
+                start_on_new_line=True,
+                line_buffered=self.stable_prompt,
+                on_first_output=self._clear_thinking,
+            )
             try:
                 response = self.runtime.run_turn(self.session, query, text_callback=streamer)
                 if streamer.has_output:
                     streamer.finish()
                     print()
                 elif response:
+                    self._clear_thinking()
                     print()
                     print(response)
                     print()
             except Exception as exc:
+                self._clear_thinking()
                 print(f"[turn failed] {exc}")
                 print()
             finally:
                 with self._lock:
                     self._active = False
+                    self._show_thinking = False
                 self._queue.task_done()
+
+    def _clear_thinking(self) -> None:
+        with self._lock:
+            if not self._show_thinking:
+                return
+            self._show_thinking = False
+        if self.stable_prompt:
+            sys.stdout.write("\x1b[1A\r\x1b[2K\r")
+            sys.stdout.flush()
+
+    def _render_thinking(self) -> None:
+        if self.stable_prompt:
+            print(self.THINKING_TEXT, flush=True)
+            return
+        print(f"[{self.THINKING_TEXT}]")
 
 
 def _is_read_only_command(command: str) -> bool:
@@ -157,7 +184,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
     print(f"[session {session.id}]")
     if resumed:
         _print_resumed_history(session)
-    prompt_context = patch_stdout() if prompt_session is not None and patch_stdout is not None else nullcontext()
+    prompt_context = patch_stdout(raw=True) if prompt_session is not None and patch_stdout is not None else nullcontext()
     with prompt_context:
         while True:
             try:

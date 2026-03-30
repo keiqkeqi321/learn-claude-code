@@ -161,6 +161,10 @@ class OpenAgentRuntime:
         if not sys.stdout.isatty():
             self._ansi_output_enabled = False
             return False
+        stdout_type = type(sys.stdout)
+        if stdout_type.__module__ == "prompt_toolkit.patch_stdout" and stdout_type.__name__ == "StdoutProxy":
+            self._ansi_output_enabled = False
+            return False
         if sys.platform != "win32":
             self._ansi_output_enabled = True
             return True
