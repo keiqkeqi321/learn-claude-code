@@ -3,25 +3,37 @@ from __future__ import annotations
 from typing import Any
 
 from openagent.config.models import MCPServerSettings
+from openagent.mcp.transport_http import StreamableHTTPTransport
 from openagent.mcp.transport_stdio import StdioTransport
 
 
 class MCPClient:
     def __init__(self, settings: MCPServerSettings):
         self.settings = settings
-        self.transport = StdioTransport(
-            command=settings.command,
-            args=settings.args,
-            cwd=settings.cwd,
-            env=settings.env or None,
-            timeout_seconds=settings.timeout_seconds,
-        )
+        if settings.transport == "http":
+            if not settings.url:
+                raise ValueError(f"MCP server '{settings.name}' requires a url for http transport")
+            self.transport = StreamableHTTPTransport(
+                url=settings.url,
+                headers=settings.http_headers,
+                timeout_seconds=settings.timeout_seconds,
+                startup_timeout_seconds=settings.startup_timeout_seconds,
+            )
+        else:
+            self.transport = StdioTransport(
+                command=settings.command,
+                args=settings.args,
+                cwd=settings.cwd,
+                env=settings.env or None,
+                timeout_seconds=settings.timeout_seconds,
+            )
         self.initialized = False
 
     def initialize(self) -> None:
         if self.initialized:
             return
-        self.transport.start()
+        if hasattr(self.transport, "start"):
+            self.transport.start()
         self.transport.request(
             "initialize",
             {
@@ -29,6 +41,7 @@ class MCPClient:
                 "capabilities": {"tools": {}},
                 "clientInfo": {"name": "OpenAgent", "version": "0.1.0"},
             },
+            startup=True,
         )
         self.transport.notify("notifications/initialized", {})
         self.initialized = True

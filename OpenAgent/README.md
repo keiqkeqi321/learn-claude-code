@@ -97,6 +97,13 @@ command = "python"
 args = ["server.py"]
 cwd = "D:/tools/mcp-filesystem"
 enabled = true
+
+[mcp_servers.unityMCP]
+transport = "http"
+url = "http://192.168.3.161:8081/mcp"
+http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
+startup_timeout_sec = 20
+enabled = true
 ```
 
 ## REPL Commands
@@ -105,6 +112,7 @@ enabled = true
 - `/tasks`
 - `/team`
 - `/inbox`
+- `/mcp`
 - `/bg`
 - `/help`
 - `/exit`
@@ -113,4 +121,5 @@ enabled = true
 
 - Data is stored under `.openagent/` in the workspace root.
 - MCP tools are exposed with the local name format `mcp__<server>__<tool>`.
+- MCP config supports both `[[mcp_servers]]` array style and `[mcp_servers.<name>]` table style.
 - The OpenAI adapter uses the chat completions API shape so provider differences stay isolated in `providers/`.

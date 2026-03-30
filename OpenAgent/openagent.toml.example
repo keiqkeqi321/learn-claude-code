@@ -20,3 +20,10 @@ cwd = "D:/tools/mcp-filesystem"
 enabled = false
 timeout_seconds = 30
 protocol_version = "2025-11-25"
+
+[mcp_servers.unityMCP]
+transport = "http"
+url = "http://127.0.0.1:8081/mcp"
+http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
+startup_timeout_sec = 20
+enabled = false

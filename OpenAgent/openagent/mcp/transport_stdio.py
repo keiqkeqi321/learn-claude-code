@@ -88,7 +88,7 @@ class StdioTransport:
             self.process.stdin.write(body)
             self.process.stdin.flush()
 
-    def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def request(self, method: str, params: dict[str, Any] | None = None, *, startup: bool = False) -> dict[str, Any]:
         self.start()
         msg_id = uuid.uuid4().hex[:8]
         response_queue: Queue = Queue()

@@ -20,12 +20,15 @@ class ProviderSettings:
 class MCPServerSettings:
     name: str
     transport: str = "stdio"
+    url: str | None = None
     command: str = ""
     args: list[str] = field(default_factory=list)
     cwd: Path | None = None
     env: dict[str, str] = field(default_factory=dict)
+    http_headers: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     timeout_seconds: int = 30
+    startup_timeout_seconds: int = 30
     protocol_version: str = "2025-11-25"
 
 

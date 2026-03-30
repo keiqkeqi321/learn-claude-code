@@ -21,6 +21,50 @@ def _read_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _resolve_optional_path(root: Path, value: str | None) -> Path | None:
+    if not value:
+        return None
+    path = Path(value)
+    if path.is_absolute():
+        return path.resolve()
+    return (root / path).resolve()
+
+
+def _build_mcp_server(root: Path, name: str, item: dict) -> MCPServerSettings:
+    transport = str(item.get("transport", "http" if item.get("url") else "stdio")).lower()
+    return MCPServerSettings(
+        name=name,
+        transport=transport,
+        url=str(item["url"]) if item.get("url") else None,
+        command=str(item.get("command", "")),
+        args=[str(arg) for arg in item.get("args", [])],
+        cwd=_resolve_optional_path(root, item.get("cwd")),
+        env={str(k): str(v) for k, v in item.get("env", {}).items()},
+        http_headers={str(k): str(v) for k, v in item.get("http_headers", {}).items()},
+        enabled=bool(item.get("enabled", True)),
+        timeout_seconds=int(item.get("timeout_seconds", item.get("request_timeout_sec", 30))),
+        startup_timeout_seconds=int(item.get("startup_timeout_sec", item.get("timeout_seconds", 30))),
+        protocol_version=str(item.get("protocol_version", "2025-11-25")),
+    )
+
+
+def _load_mcp_servers(root: Path, raw: dict) -> list[MCPServerSettings]:
+    mcp_servers: list[MCPServerSettings] = []
+    servers_raw = raw.get("mcp_servers", {})
+    if isinstance(servers_raw, list):
+        for item in servers_raw:
+            if not isinstance(item, dict) or "name" not in item:
+                continue
+            mcp_servers.append(_build_mcp_server(root, str(item["name"]), item))
+        return mcp_servers
+    if isinstance(servers_raw, dict):
+        for name, item in servers_raw.items():
+            if not isinstance(item, dict):
+                continue
+            mcp_servers.append(_build_mcp_server(root, str(name), item))
+    return mcp_servers
+
+
 def _storage_settings(workspace_root: Path) -> StorageSettings:
     data_dir = workspace_root / ".openagent"
     return StorageSettings(
@@ -77,22 +121,7 @@ def load_settings(workspace_root: str | Path | None = None) -> AppSettings:
         max_agent_rounds=int(runtime_raw.get("max_agent_rounds", 50)),
     )
 
-    mcp_servers: list[MCPServerSettings] = []
-    for item in raw.get("mcp_servers", []):
-        cwd = item.get("cwd")
-        mcp_servers.append(
-            MCPServerSettings(
-                name=str(item["name"]),
-                transport=str(item.get("transport", "stdio")),
-                command=str(item["command"]),
-                args=[str(arg) for arg in item.get("args", [])],
-                cwd=(root / cwd).resolve() if cwd and not Path(cwd).is_absolute() else (Path(cwd).resolve() if cwd else None),
-                env={str(k): str(v) for k, v in item.get("env", {}).items()},
-                enabled=bool(item.get("enabled", True)),
-                timeout_seconds=int(item.get("timeout_seconds", 30)),
-                protocol_version=str(item.get("protocol_version", "2025-11-25")),
-            )
-        )
+    mcp_servers = _load_mcp_servers(root, raw)
 
     settings = AppSettings(
         workspace_root=root,

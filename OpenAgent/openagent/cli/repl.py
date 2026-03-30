@@ -3,13 +3,22 @@ from __future__ import annotations
 import json
 
 from openagent.cli.commands import ConsoleStreamer
+from openagent.cli.prompting import COMMAND_SPECS, create_prompt_session
 
 
 def run_repl(runtime) -> int:
     session = runtime.create_session()
+    prompt_session = None
+    try:
+        prompt_session = create_prompt_session(runtime.settings.workspace_root)
+    except Exception:
+        prompt_session = None
     while True:
         try:
-            query = input("openagent >> ")
+            if prompt_session is not None:
+                query = prompt_session.prompt("openagent >> ")
+            else:
+                query = input("openagent >> ")
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -34,11 +43,14 @@ def run_repl(runtime) -> int:
         if stripped == "/inbox":
             print(json.dumps(runtime.bus.read_inbox("lead"), indent=2, ensure_ascii=False))
             continue
+        if stripped == "/mcp":
+            print(runtime.mcp_status())
+            continue
         if stripped == "/bg":
             print(runtime.background_manager.check())
             continue
         if stripped == "/help":
-            print("/compact /tasks /team /inbox /bg /help /exit")
+            print("\n".join(f"{command} - {description}" for command, description in COMMAND_SPECS))
             continue
         streamer = ConsoleStreamer()
         response = runtime.run_turn(session, query, text_callback=streamer)

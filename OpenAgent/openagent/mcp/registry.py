@@ -22,9 +22,11 @@ def _render_mcp_result(result: dict[str, Any]) -> str:
 
 class MCPRegistry:
     def __init__(self, servers: list[MCPServerSettings]):
+        self.all_servers = servers
         self.servers = [server for server in servers if server.enabled]
         self.clients: dict[str, MCPClient] = {}
         self.errors: dict[str, str] = {}
+        self.server_tools: dict[str, list[str]] = {}
 
     def register_tools(self, registry) -> None:
         for server in self.servers:
@@ -32,6 +34,7 @@ class MCPRegistry:
                 client = MCPClient(server)
                 tools = client.list_tools()
                 self.clients[server.name] = client
+                self.server_tools[server.name] = [tool["name"] for tool in tools]
             except Exception as exc:
                 self.errors[server.name] = str(exc)
                 continue
@@ -58,12 +61,37 @@ class MCPRegistry:
 
     def status_lines(self) -> list[str]:
         lines = []
-        for server in self.servers:
+        for server in self.all_servers:
+            if not server.enabled:
+                target = server.url or server.command or "(unconfigured)"
+                lines.append(f"{server.name}: disabled [{server.transport}] {target}")
+                continue
             if server.name in self.clients:
-                lines.append(f"{server.name}: connected")
+                target = server.url or server.command or "(unconfigured)"
+                tool_count = len(self.server_tools.get(server.name, []))
+                lines.append(f"{server.name}: connected [{server.transport}] {target} tools={tool_count}")
             else:
                 lines.append(f"{server.name}: error - {self.errors.get(server.name, 'not initialized')}")
         return lines
+
+    def describe_servers(self) -> str:
+        if not self.all_servers:
+            return "No MCP servers configured."
+        lines: list[str] = []
+        for server in self.all_servers:
+            target = server.url or server.command or "(unconfigured)"
+            if not server.enabled:
+                status = "disabled"
+            elif server.name in self.clients:
+                status = "connected"
+            else:
+                status = f"error: {self.errors.get(server.name, 'not initialized')}"
+            lines.append(f"- {server.name} [{server.transport}] {status}")
+            lines.append(f"  target: {target}")
+            tools = self.server_tools.get(server.name, [])
+            if tools:
+                lines.append(f"  tools: {', '.join(tools)}")
+        return "\n".join(lines)
 
     def close(self) -> None:
         for client in self.clients.values():

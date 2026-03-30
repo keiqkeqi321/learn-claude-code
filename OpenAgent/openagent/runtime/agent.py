@@ -426,5 +426,8 @@ class OpenAgentRuntime:
             lines.append("mcp: none configured")
         return "\n".join(lines)
 
+    def mcp_status(self) -> str:
+        return self.mcp_registry.describe_servers()
+
     def close(self) -> None:
         self.mcp_registry.close()

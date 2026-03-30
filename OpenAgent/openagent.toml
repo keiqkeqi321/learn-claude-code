@@ -11,12 +11,10 @@ background_poll_interval_seconds = 2
 teammate_idle_timeout_seconds = 60
 teammate_poll_interval_seconds = 5
 
-[[mcp_servers]]
-name = "filesystem"
-transport = "stdio"
-command = "python"
-args = ["server.py"]
-cwd = "D:/tools/mcp-filesystem"
-enabled = false
-timeout_seconds = 30
-protocol_version = "2025-11-25"
+[mcp_servers.unityMCP]
+transport = "http"
+url = "http://192.168.3.161:8081/mcp"
+http_headers = { "X-API-Key" = "aa7d34afca38efed7cd3e042932cc119", "Accept" = "text/event-stream" }
+startup_timeout_sec = 20
+enabled = true
+
