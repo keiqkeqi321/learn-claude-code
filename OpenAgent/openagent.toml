@@ -1,0 +1,22 @@
+[provider]
+name = "anthropic"
+model = "glm-5"
+# base_url = "https://api.anthropic.com"
+# max_tokens = 8000
+
+[runtime]
+token_threshold = 100000
+command_timeout_seconds = 120
+background_poll_interval_seconds = 2
+teammate_idle_timeout_seconds = 60
+teammate_poll_interval_seconds = 5
+
+[[mcp_servers]]
+name = "filesystem"
+transport = "stdio"
+command = "python"
+args = ["server.py"]
+cwd = "D:/tools/mcp-filesystem"
+enabled = false
+timeout_seconds = 30
+protocol_version = "2025-11-25"

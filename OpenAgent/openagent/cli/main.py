@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+import argparse
+
+from openagent.config.settings import load_settings
+from openagent.runtime.agent import OpenAgentRuntime
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="openagent")
+    parser.add_argument("--workspace", default=".", help="Workspace root for the agent.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("chat", help="Start interactive chat mode.")
+
+    run_parser = subparsers.add_parser("run", help="Run a single prompt.")
+    run_parser.add_argument("prompt", help="Prompt to execute.")
+
+    tasks_parser = subparsers.add_parser("tasks", help="Inspect persistent tasks.")
+    tasks_subparsers = tasks_parser.add_subparsers(dest="tasks_command", required=True)
+    tasks_subparsers.add_parser("list", help="List tasks.")
+    get_parser = tasks_subparsers.add_parser("get", help="Get a task by ID.")
+    get_parser.add_argument("task_id", type=int)
+
+    subparsers.add_parser("compact", help="Compact the latest session.")
+    subparsers.add_parser("doctor", help="Validate runtime configuration.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    settings = load_settings(args.workspace)
+    runtime = OpenAgentRuntime(settings)
+    try:
+        from openagent.cli.commands import (
+            cmd_chat,
+            cmd_compact,
+            cmd_doctor,
+            cmd_run,
+            cmd_tasks_get,
+            cmd_tasks_list,
+        )
+
+        if args.command == "chat":
+            return cmd_chat(runtime)
+        if args.command == "run":
+            return cmd_run(runtime, args.prompt)
+        if args.command == "tasks" and args.tasks_command == "list":
+            return cmd_tasks_list(runtime)
+        if args.command == "tasks" and args.tasks_command == "get":
+            return cmd_tasks_get(runtime, args.task_id)
+        if args.command == "compact":
+            return cmd_compact(runtime)
+        if args.command == "doctor":
+            return cmd_doctor(runtime)
+        parser.error("Unsupported command")
+    finally:
+        runtime.close()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
