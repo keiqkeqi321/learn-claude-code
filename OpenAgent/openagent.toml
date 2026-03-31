@@ -17,9 +17,16 @@ base_url = "https://coding.dashscope.aliyuncs.com/apps/anthropic"
 
 [providers.openai]
 models = ["glm-5", "kimi-k2.5", "qwen3.5-plus"]
-default_model = "kimi-k2.5"
+default_model = "qwen3.5-plus"
 api_key = "sk-sp-54e807dab13a42f88021d34da7107e86"
 base_url = "https://coding.dashscope.aliyuncs.com/v1"
+
+[providers.openrouter]
+models = ["stepfun/step-3.5-flash"]
+default_model = "stepfun/step-3.5-flash"
+api_key = "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"
+base_url = https://openrouter.ai/api/v1
+
 
 [runtime]
 token_threshold = 100000

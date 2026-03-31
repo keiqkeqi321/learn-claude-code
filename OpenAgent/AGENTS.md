@@ -50,10 +50,13 @@ The runtime owns:
 - `Shift+Tab` cycles execution modes in the REPL.
 - The active execution mode is shown under `openagent >>` with color-coded risk.
 - When a needed tool is blocked by the current mode, the agent can call `request_authorization`.
+- The agent can call `request_mode_switch` to ask the user to switch to `? for shortcuts`, `⏸ plan mode on`, or `⏵⏵ accept edits on`.
+- The agent must not use `request_mode_switch` to request `! Yolo`.
 - Authorization prompts should offer:
   - allow once
   - allow in this workspace
   - deny
+- Mode-switch prompts should let the user either switch to the requested non-Yolo mode or stay in the current mode.
 - After the user answers an authorization prompt, the agent should continue the same task without requiring the user to restate it.
 - Empty or incomplete sessions should not appear in resume history. A session must include both a visible user message and a visible assistant reply.
 - `TodoWrite` updates session-scoped todos.

@@ -29,6 +29,9 @@ from openagent.runtime.compact import CompactManager, estimate_tokens, microcomp
 from openagent.runtime.execution_mode import (
     AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
+    MODE_SWITCH_TOOL_NAME,
+    NON_YOLO_EXECUTION_MODES,
+    normalize_execution_mode,
     execution_mode_spec,
     tool_block_message,
 )
@@ -107,6 +110,7 @@ class OpenAgentRuntime:
         self.settings = settings
         self.execution_mode = DEFAULT_EXECUTION_MODE
         self.authorization_request_handler = None
+        self.mode_switch_request_handler = None
         self._workspace_authorized_tools: set[str] = set()
         self._once_authorized_tools: dict[str, int] = {}
         self.provider = self._make_provider()
@@ -386,7 +390,7 @@ class OpenAgentRuntime:
         return dict(self.settings.provider_profiles)
 
     def authorize_tool_call(self, tool_name: str, payload: dict[str, Any], *, ctx=None) -> str | None:
-        if tool_name == AUTHORIZATION_TOOL_NAME:
+        if tool_name in {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}:
             return None
         if tool_name in self._workspace_authorized_tools:
             return None
@@ -432,6 +436,41 @@ class OpenAgentRuntime:
             "status": "approved" if status == "approved" else "denied",
             "scope": scope,
             "tool_name": normalized_tool,
+            "reason": str(result.get("reason", "")).strip(),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def request_mode_switch(self, target_mode: str, reason: str = "") -> str:
+        normalized_target = normalize_execution_mode(target_mode)
+        if normalized_target == "yolo" or normalized_target not in NON_YOLO_EXECUTION_MODES:
+            return (
+                "Mode switch request failed: target_mode must be one of "
+                "'shortcuts', 'plan', or 'accept_edits'."
+            )
+        current_mode = normalize_execution_mode(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE))
+        if normalized_target == current_mode:
+            return json.dumps(
+                {
+                    "status": "unchanged",
+                    "current_mode": current_mode,
+                    "target_mode": normalized_target,
+                    "reason": "Already in requested mode.",
+                },
+                ensure_ascii=False,
+            )
+        handler = self.mode_switch_request_handler
+        if not callable(handler):
+            return "Mode switch request failed: interactive mode switching is unavailable in this session."
+        result = handler(target_mode=normalized_target, reason=str(reason).strip(), current_mode=current_mode)
+        if not isinstance(result, dict):
+            return "Mode switch request failed: invalid mode switch response."
+        approved = bool(result.get("approved"))
+        active_mode = normalize_execution_mode(result.get("active_mode", current_mode))
+        self.execution_mode = active_mode
+        payload = {
+            "status": "approved" if approved else "denied",
+            "current_mode": active_mode,
+            "target_mode": normalized_target,
             "reason": str(result.get("reason", "")).strip(),
         }
         return json.dumps(payload, ensure_ascii=False)
@@ -514,6 +553,23 @@ class OpenAgentRuntime:
                     payload["reason"],
                     payload.get("argument_summary", ""),
                 ),
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name=MODE_SWITCH_TOOL_NAME,
+                description=(
+                    "Request that the user switch execution mode to shortcuts, plan, or accept_edits only."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "target_mode": {"type": "string", "enum": list(NON_YOLO_EXECUTION_MODES)},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["target_mode"],
+                },
+                handler=lambda ctx, payload: self.request_mode_switch(payload["target_mode"], payload.get("reason", "")),
             )
         )
         registry.register(

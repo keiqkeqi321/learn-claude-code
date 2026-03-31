@@ -4,13 +4,16 @@ from dataclasses import dataclass
 
 DEFAULT_EXECUTION_MODE = "accept_edits"
 AUTHORIZATION_TOOL_NAME = "request_authorization"
+MODE_SWITCH_TOOL_NAME = "request_mode_switch"
 EXECUTION_MODE_ORDER = ("shortcuts", "plan", "accept_edits", "yolo")
+NON_YOLO_EXECUTION_MODES = ("shortcuts", "plan", "accept_edits")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         "read_file",
         "load_skill",
         "compress",
         AUTHORIZATION_TOOL_NAME,
+        MODE_SWITCH_TOOL_NAME,
         "TodoWrite",
         "task_get",
         "task_list",
@@ -35,10 +38,16 @@ class ExecutionModeSpec:
         return f"{self.badge} {self.label}"
 
 
+SHORTCUTS_BADGE = "?"
+PLAN_BADGE = "\u23f8"
+ACCEPT_EDITS_BADGE = "\u23f5\u23f5"
+YOLO_BADGE = "!"
+
+
 EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
     "shortcuts": ExecutionModeSpec(
         key="shortcuts",
-        badge="?",
+        badge=SHORTCUTS_BADGE,
         label="for shortcuts",
         color="fg:#94a3b8",
         ansi_color="\x1b[38;5;110m",
@@ -47,42 +56,43 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "- Current mode: ? for shortcuts.\n"
             "- Keep workspace files read-only.\n"
             "- Use lightweight, read-only tools only.\n"
-            "- Call request_authorization before asking for edits or broader tool access."
+            "- Call request_authorization before asking for edits or broader tool access.\n"
+            "- Call request_mode_switch to ask the user to move to shortcuts, plan, or accept_edits when needed."
         ),
     ),
     "plan": ExecutionModeSpec(
         key="plan",
-        badge="⏸",
+        badge=PLAN_BADGE,
         label="plan mode on",
         color="fg:#22d3ee bold",
         ansi_color="\x1b[38;5;51m",
         guidance=(
             "Execution mode:\n"
-            "- Current mode: ⏸ plan mode on.\n"
+            "- Current mode: \u23f8 plan mode on.\n"
             "- Keep workspace files read-only.\n"
             "- Inspect context with read-only tools when needed.\n"
             "- Return a concrete implementation plan before asking for a higher-permission mode.\n"
-            "- If execution is needed after planning, call request_authorization first."
+            "- If execution is needed after planning, call request_mode_switch or request_authorization first."
         ),
     ),
     "accept_edits": ExecutionModeSpec(
         key="accept_edits",
-        badge="⏵⏵",
+        badge=ACCEPT_EDITS_BADGE,
         label="accept edits on",
         color="fg:#f59e0b bold",
         ansi_color="\x1b[38;5;214m",
         guidance=(
             "Execution mode:\n"
-            "- Current mode: ⏵⏵ accept edits on.\n"
+            "- Current mode: \u23f5\u23f5 accept edits on.\n"
             "- You may edit workspace files with write_file and edit_file.\n"
             "- Treat other tools as requiring explicit user approval.\n"
             "- Call request_authorization before using a blocked non-edit tool.\n"
-            "- If broader autonomy is required, ask the user to switch to ! Yolo."
+            "- You may call request_mode_switch only for shortcuts, plan, or accept_edits."
         ),
     ),
     "yolo": ExecutionModeSpec(
         key="yolo",
-        badge="!",
+        badge=YOLO_BADGE,
         label="Yolo",
         color="fg:#ef4444 bold",
         ansi_color="\x1b[38;5;196m",
@@ -119,7 +129,7 @@ def tool_block_message(mode: str | None, tool_name: str) -> str | None:
     spec = execution_mode_spec(mode)
     if spec.key == "yolo":
         return None
-    if tool_name == AUTHORIZATION_TOOL_NAME:
+    if tool_name in {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}:
         return None
     if tool_name in READ_ONLY_TOOL_NAMES:
         return None
@@ -128,14 +138,14 @@ def tool_block_message(mode: str | None, tool_name: str) -> str | None:
     if tool_name in FILE_EDIT_TOOL_NAMES:
         return (
             f"Blocked in {spec.title}: workspace files are read-only. "
-            "Call request_authorization or switch to ⏵⏵ accept edits on / ! Yolo."
+            f"Call request_authorization or request_mode_switch to {ACCEPT_EDITS_BADGE} accept edits on."
         )
     return (
         f"Blocked in {spec.title}: '{tool_name}' requires broader tool access. "
-        "Call request_authorization or switch to ! Yolo for full autonomy."
+        "Call request_authorization if this tool is necessary."
         if spec.key != "accept_edits"
         else (
             f"Blocked in {spec.title}: '{tool_name}' still requires explicit user approval. "
-            "Call request_authorization or switch to ! Yolo for full autonomy."
+            "Call request_authorization if this tool is necessary."
         )
     )

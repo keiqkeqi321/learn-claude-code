@@ -124,6 +124,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("Active model: kimi-k2.5", prompt)
         self.assertIn("Current mode: ⏸ plan mode on.", prompt)
         self.assertIn("Return a concrete implementation plan", prompt)
+        self.assertIn("request_mode_switch", prompt)
         self.assertIn("Do not claim to be Claude", prompt)
 
     def test_authorize_tool_call_blocks_non_edit_tools_in_accept_edits_mode(self) -> None:
@@ -136,6 +137,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
         allowed = OpenAgentRuntime.authorize_tool_call(runtime, "write_file", {"path": "demo.txt", "content": "ok"})
 
         self.assertIn("requires explicit user approval", blocked)
+        self.assertNotIn("! Yolo", blocked)
         self.assertIsNone(allowed)
 
     def test_authorize_tool_call_blocks_file_edits_in_plan_mode(self) -> None:
@@ -147,6 +149,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
         blocked = OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"})
 
         self.assertIn("workspace files are read-only", blocked)
+        self.assertNotIn("! Yolo", blocked)
 
     def test_request_authorization_grants_once_and_is_consumed(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
@@ -183,6 +186,54 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         self.assertIn('"scope": "workspace"', result)
         self.assertIsNone(OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"}))
+
+    def test_request_mode_switch_rejects_yolo_target(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+
+        result = OpenAgentRuntime.request_mode_switch(runtime, "yolo", "Need full autonomy")
+
+        self.assertIn("target_mode must be one of", result)
+
+    def test_request_mode_switch_updates_runtime_mode_when_approved(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+        runtime.mode_switch_request_handler = lambda **kwargs: {
+            "approved": True,
+            "active_mode": "accept_edits",
+            "reason": "Switched to accept edits.",
+        }
+
+        result = OpenAgentRuntime.request_mode_switch(runtime, "accept_edits", "Plan is done")
+
+        self.assertIn('"status": "approved"', result)
+        self.assertEqual(runtime.execution_mode, "accept_edits")
+
+    def test_build_system_prompt_drops_plan_guidance_after_mode_switch(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(
+            workspace_root=Path("D:/workspace"),
+            agent=SimpleNamespace(system_prompt=None, name="OpenAgent"),
+            provider=SimpleNamespace(name="openai", model="kimi-k2.5"),
+        )
+        runtime.skill_loader = SimpleNamespace(descriptions=lambda: "none")
+        runtime.execution_mode = "plan"
+        runtime.mode_switch_request_handler = lambda **kwargs: {
+            "approved": True,
+            "active_mode": "accept_edits",
+            "reason": "Switched to accept edits.",
+        }
+
+        plan_prompt = OpenAgentRuntime.build_system_prompt(runtime)
+        OpenAgentRuntime.request_mode_switch(runtime, "accept_edits", "Plan is done")
+        edit_prompt = OpenAgentRuntime.build_system_prompt(runtime)
+
+        self.assertIn("Return a concrete implementation plan", plan_prompt)
+        self.assertIn("plan mode on.", plan_prompt)
+        self.assertNotIn("Return a concrete implementation plan", edit_prompt)
+        self.assertIn("accept edits on.", edit_prompt)
+        self.assertIn("write_file and edit_file", edit_prompt)
+        self.assertNotIn("! Yolo", edit_prompt)
 
     def test_switch_provider_model_updates_runtime_and_compact_manager(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

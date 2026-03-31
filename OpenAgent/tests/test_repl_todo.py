@@ -6,7 +6,13 @@ from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from openagent.cli.repl import TurnQueueRunner, _handle_model_command, _handle_undo_command, _resolve_authorization_requests
+from openagent.cli.repl import (
+    TurnQueueRunner,
+    _handle_model_command,
+    _handle_undo_command,
+    _resolve_authorization_requests,
+    _resolve_mode_switch_requests,
+)
 
 
 def _render_prompt_text(fragments) -> str:
@@ -128,6 +134,36 @@ class ReplTodoTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(result["value"]["status"], "approved")
         self.assertEqual(result["value"]["scope"], "once")
+
+    def test_request_mode_switch_is_resolved_on_main_thread(self) -> None:
+        runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+        result: dict[str, dict[str, str]] = {}
+
+        worker = Thread(
+            target=lambda: result.setdefault(
+                "value",
+                runner.request_mode_switch(
+                    target_mode="accept_edits",
+                    reason="Plan is complete",
+                    current_mode="plan",
+                ),
+            )
+        )
+        worker.start()
+
+        with patch("openagent.cli.repl.choose_mode_switch_interactively", return_value="switch"):
+            for _ in range(50):
+                if _resolve_mode_switch_requests(runner):
+                    break
+                time.sleep(0.01)
+
+        worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(result["value"]["approved"])
+        self.assertEqual(result["value"]["active_mode"], "accept_edits")
+        self.assertEqual(runtime.execution_mode, "accept_edits")
 
     def test_undo_command_confirms_before_running(self) -> None:
         runtime = SimpleNamespace(undo_last_turn=lambda session: "undid last change set")

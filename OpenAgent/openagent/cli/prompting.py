@@ -425,6 +425,24 @@ def choose_authorization_interactively(
     )
 
 
+def choose_mode_switch_interactively(target_mode_label: str, current_mode_label: str, reason: str = "") -> str | None:
+    details = [
+        "The agent wants to switch execution mode before continuing.",
+        f"Current mode: {current_mode_label}",
+        f"Requested mode: {target_mode_label}",
+    ]
+    if reason:
+        details.append(f"Reason: {reason}")
+    return choose_item_interactively(
+        "Switch Execution Mode",
+        "\n".join(details),
+        [
+            ("switch", f"Switch to {target_mode_label}"),
+            ("stay", f"Stay in {current_mode_label}"),
+        ],
+    )
+
+
 def format_session_timestamp(timestamp: float | None) -> str:
     if not timestamp:
         return "unknown time"

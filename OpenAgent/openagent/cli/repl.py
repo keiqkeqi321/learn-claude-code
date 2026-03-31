@@ -15,6 +15,7 @@ from openagent.cli.prompting import (
     PROMPT_TEXT,
     choose_authorization_interactively,
     choose_item_interactively,
+    choose_mode_switch_interactively,
     create_prompt_session,
     fallback_prompt_message,
     styled_prompt_message,
@@ -84,6 +85,15 @@ class AuthorizationRequest:
     response: dict[str, str] | None = None
 
 
+@dataclass(slots=True)
+class ModeSwitchRequest:
+    target_mode: str
+    current_mode: str
+    reason: str
+    completed: Event
+    response: dict[str, str] | None = None
+
+
 class TurnQueueRunner:
     THINKING_PHRASES = (
         "AI is cooking",
@@ -115,6 +125,7 @@ class TurnQueueRunner:
         self._queued_previews: list[tuple[int, str]] = []
         self._interrupt_requested = False
         self._authorization_requests: list[AuthorizationRequest] = []
+        self._mode_switch_requests: list[ModeSwitchRequest] = []
 
     def start(self) -> None:
         self._worker.start()
@@ -178,6 +189,35 @@ class TurnQueueRunner:
         with self._lock:
             pending = list(self._authorization_requests)
             self._authorization_requests = []
+        return pending
+
+    def request_mode_switch(self, *, target_mode: str, reason: str = "", current_mode: str = DEFAULT_EXECUTION_MODE) -> dict[str, str]:
+        request = ModeSwitchRequest(
+            target_mode=target_mode,
+            current_mode=current_mode,
+            reason=reason,
+            completed=Event(),
+        )
+        with self._lock:
+            self._mode_switch_requests.append(request)
+        self._invalidate_ui()
+        if self._prompt_interrupter is not None:
+            try:
+                self._prompt_interrupter()
+            except Exception:
+                pass
+        if not request.completed.wait(timeout=300):
+            return {
+                "approved": False,
+                "active_mode": self._execution_mode,
+                "reason": "Mode switch request timed out.",
+            }
+        return request.response or {"approved": False, "active_mode": self._execution_mode, "reason": "Mode switch denied."}
+
+    def drain_mode_switch_requests(self) -> list[ModeSwitchRequest]:
+        with self._lock:
+            pending = list(self._mode_switch_requests)
+            self._mode_switch_requests = []
         return pending
 
     def close(self, *, drain: bool) -> int:
@@ -333,6 +373,12 @@ class TurnQueueRunner:
         self._invalidate_ui()
         return self.current_execution_mode()
 
+    def set_execution_mode(self, mode: str):
+        self._execution_mode = normalize_execution_mode(mode)
+        setattr(self.runtime, "execution_mode", self._execution_mode)
+        self._invalidate_ui()
+        return self.current_execution_mode()
+
     def _status_line(self) -> str:
         with self._lock:
             status = self._status
@@ -479,9 +525,37 @@ def _resolve_authorization_requests(runner: TurnQueueRunner) -> bool:
     return True
 
 
+def _resolve_mode_switch_requests(runner: TurnQueueRunner) -> bool:
+    pending = runner.drain_mode_switch_requests()
+    if not pending:
+        return False
+    for request in pending:
+        selection = choose_mode_switch_interactively(
+            execution_mode_spec(request.target_mode).title,
+            execution_mode_spec(request.current_mode).title,
+            request.reason,
+        )
+        if selection == "switch":
+            active_mode = runner.set_execution_mode(request.target_mode).key
+            request.response = {
+                "approved": True,
+                "active_mode": active_mode,
+                "reason": f"Switched to {execution_mode_spec(active_mode).title}.",
+            }
+        else:
+            request.response = {
+                "approved": False,
+                "active_mode": runner.current_execution_mode().key,
+                "reason": "Stayed in the current mode.",
+            }
+        request.completed.set()
+    return True
+
+
 def run_repl(runtime, session, resumed: bool = False) -> int:
     runner = TurnQueueRunner(runtime, session, stable_prompt=False)
     runtime.authorization_request_handler = runner.request_authorization
+    runtime.mode_switch_request_handler = runner.request_mode_switch
     prompt_session = None
     try:
         prompt_session = create_prompt_session(
@@ -506,6 +580,8 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
     try:
         with prompt_context:
             while True:
+                if _resolve_mode_switch_requests(runner):
+                    continue
                 if _resolve_authorization_requests(runner):
                     continue
                 try:
@@ -540,6 +616,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     runner.close(drain=True)
                     break
                 if query == AUTHORIZATION_PROMPT_SENTINEL:
+                    _resolve_mode_switch_requests(runner)
                     _resolve_authorization_requests(runner)
                     continue
                 stripped = query.strip()
@@ -616,4 +693,5 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     print(f"[queued; {ahead} item(s) ahead]")
     finally:
         runtime.authorization_request_handler = None
+        runtime.mode_switch_request_handler = None
     return 0
