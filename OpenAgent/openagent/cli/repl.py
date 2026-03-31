@@ -17,6 +17,7 @@ from openagent.cli.prompting import (
     fallback_prompt_message,
     styled_prompt_message,
 )
+from openagent.runtime.agent import TurnInterrupted
 from openagent.runtime.messages import render_text_content
 from openagent.tools.todo import TODO_STATUS_MARKERS
 
@@ -89,6 +90,7 @@ class TurnQueueRunner:
         self._thinking_phrase = self.THINKING_PHRASES[0]
         self._next_query_id = 1
         self._queued_previews: list[tuple[int, str]] = []
+        self._interrupt_requested = False
 
     def start(self) -> None:
         self._worker.start()
@@ -125,6 +127,18 @@ class TurnQueueRunner:
         self._queue.put(None)
         self._worker.join()
         return dropped
+
+    def request_interrupt(self) -> bool:
+        with self._lock:
+            if not self._active or self._interrupt_requested:
+                return False
+            self._interrupt_requested = True
+        self._set_status("interrupting")
+        return True
+
+    def should_interrupt(self) -> bool:
+        with self._lock:
+            return self._interrupt_requested
 
     def _clear_pending(self) -> int:
         dropped = 0
@@ -177,7 +191,14 @@ class TurnQueueRunner:
                 on_first_output=None,
             )
             try:
-                response = self.runtime.run_turn(self.session, query_text, text_callback=streamer)
+                with self._lock:
+                    self._interrupt_requested = False
+                response = self.runtime.run_turn(
+                    self.session,
+                    query_text,
+                    text_callback=streamer,
+                    should_interrupt=self.should_interrupt,
+                )
                 if streamer.has_output:
                     streamer.finish()
                     print()
@@ -186,12 +207,17 @@ class TurnQueueRunner:
                     print(response)
                     print()
                 self.runtime.print_last_turn_file_summary(self.session)
+            except TurnInterrupted:
+                print()
+                print("[interrupted]")
+                print()
             except Exception as exc:
                 print(f"[turn failed] {exc}")
                 print()
             finally:
                 with self._lock:
                     self._active = False
+                    self._interrupt_requested = False
                 self._set_status("done")
                 self._queue.task_done()
 
@@ -239,6 +265,8 @@ class TurnQueueRunner:
         if status == "thinking":
             dots = int((time.monotonic() - changed_at) / self.THINKING_FRAME_SECONDS) % 4
             return thinking_phrase + ("." * dots)
+        if status == "interrupting":
+            return "interrupting"
         if status == "done":
             return self.DONE_TEXT
         return ""
@@ -348,12 +376,17 @@ def _handle_undo_command(runtime, session) -> None:
 
 
 def run_repl(runtime, session, resumed: bool = False) -> int:
+    runner = TurnQueueRunner(runtime, session, stable_prompt=False)
     prompt_session = None
     try:
-        prompt_session = create_prompt_session(runtime.settings.workspace_root)
+        prompt_session = create_prompt_session(
+            runtime.settings.workspace_root,
+            on_interrupt=runner.request_interrupt,
+            is_busy=runner.has_inflight_work,
+        )
     except Exception:
         prompt_session = None
-    runner = TurnQueueRunner(runtime, session, stable_prompt=prompt_session is not None and patch_stdout is not None)
+    runner.stable_prompt = prompt_session is not None and patch_stdout is not None
     if prompt_session is not None:
         runner.set_ui_invalidator(lambda: prompt_session.app.invalidate() if prompt_session.app else None)
     runner.start()
@@ -378,8 +411,14 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
             except (EOFError, KeyboardInterrupt):
                 print()
                 active, queued = runner.stats()
-                if active or queued:
-                    print(f"[waiting for {queued + (1 if active else 0)} in-flight item(s) before exit]")
+                if active:
+                    if runner.request_interrupt():
+                        print("[interrupt requested]")
+                    continue
+                if queued:
+                    print(f"[waiting for {queued} queued item(s) before exit]")
+                    runner.close(drain=True)
+                    break
                 runner.close(drain=True)
                 break
             stripped = query.strip()

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from openagent.config.models import ProviderProfileSettings, ProviderSettings
-from openagent.runtime.agent import OpenAgentRuntime
+from openagent.runtime.agent import OpenAgentRuntime, TurnInterrupted
 from openagent.runtime.session import AgentSession
 
 
@@ -193,6 +193,23 @@ class RuntimeToolOutputTests(unittest.TestCase):
             self.assertEqual(session.undo_stack, [])
             self.assertEqual(session.last_turn_file_changes, [])
             self.assertIn("Undid 1 file change", message)
+
+    def test_complete_does_not_retry_turn_interrupt(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(max_tokens=1024))
+        attempts: list[str] = []
+
+        class _Provider:
+            def complete(self, **kwargs):
+                attempts.append("called")
+                raise TurnInterrupted("Interrupted by user.")
+
+        runtime.provider = _Provider()
+
+        with self.assertRaises(TurnInterrupted):
+            OpenAgentRuntime.complete(runtime, "system", [], [], text_callback=None)
+
+        self.assertEqual(attempts, ["called"])
 
 
 if __name__ == "__main__":

@@ -69,6 +69,16 @@ class ReplTodoTests(unittest.TestCase):
 
         mock_print.assert_called_with("switched anthropic:glm-5")
 
+    def test_request_interrupt_marks_runner_interrupting(self) -> None:
+        runner = TurnQueueRunner(SimpleNamespace(), SimpleNamespace(todo_items=[]), stable_prompt=True)
+        runner._active = True
+
+        requested = runner.request_interrupt()
+
+        self.assertTrue(requested)
+        self.assertTrue(runner.should_interrupt())
+        self.assertEqual(runner._status, "interrupting")
+
     def test_undo_command_confirms_before_running(self) -> None:
         runtime = SimpleNamespace(undo_last_turn=lambda session: "undid last change set")
         session = SimpleNamespace(undo_stack=[{"turn_id": "turn-1"}])

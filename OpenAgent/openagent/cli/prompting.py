@@ -223,7 +223,12 @@ def _handle_tab_action(buffer) -> bool:
     return _apply_current_completion(buffer)
 
 
-def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
+def create_prompt_session(
+    workspace_root: Path,
+    *,
+    on_interrupt=None,
+    is_busy=None,
+) -> PromptSession[str]:
     bindings = KeyBindings()
 
     @bindings.add("enter")
@@ -243,6 +248,9 @@ def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
         buffer = event.current_buffer
         if buffer.complete_state:
             buffer.cancel_completion()
+            return
+        if on_interrupt is not None and callable(is_busy) and is_busy() and not buffer.text:
+            on_interrupt()
             return
 
     @bindings.add("up")

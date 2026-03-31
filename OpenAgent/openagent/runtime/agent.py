@@ -50,6 +50,10 @@ from openagent.tools.team import register_team_tools
 from openagent.tools.todo import TodoManager, register_todo_tool
 
 
+class TurnInterrupted(RuntimeError):
+    pass
+
+
 class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
     SILENT_TOOL_NAMES = {"TodoWrite"}
@@ -567,6 +571,8 @@ class OpenAgentRuntime:
                     max_tokens=self.settings.provider.max_tokens,
                     text_callback=text_callback,
                 )
+            except TurnInterrupted:
+                raise
             except Exception as exc:
                 last_error = exc
         raise RuntimeError(f"Provider call failed after retries: {last_error}")
@@ -665,90 +671,112 @@ class OpenAgentRuntime:
         session.messages = self.compact_manager.auto_compact(session.id, session.messages)
         self.session_manager.save(session)
 
-    def run_turn(self, session: AgentSession, user_input: str, text_callback=None) -> str:
+    def _raise_if_interrupted(self, should_interrupt) -> None:
+        if should_interrupt is not None and should_interrupt():
+            raise TurnInterrupted("Interrupted by user.")
+
+    def run_turn(self, session: AgentSession, user_input: str, text_callback=None, should_interrupt=None) -> str:
         session.pending_file_changes = []
         session.last_turn_file_changes = []
         session.messages.append(make_user_text_message(user_input))
         self.transcript_store.append(session.id, {"role": "user", "content": user_input})
-        return self._agent_loop(session, text_callback=text_callback)
+        return self._agent_loop(session, text_callback=text_callback, should_interrupt=should_interrupt)
 
-    def _agent_loop(self, session: AgentSession, text_callback=None) -> str:
+    def _agent_loop(self, session: AgentSession, text_callback=None, should_interrupt=None) -> str:
         final_text = ""
-        for _ in range(self.settings.runtime.max_agent_rounds):
-            microcompact(session.messages)
-            if estimate_tokens(session.messages) > self.settings.runtime.token_threshold:
-                session.messages = self.compact_manager.auto_compact(session.id, session.messages)
-            background_notifications = self.background_manager.drain()
-            if background_notifications:
-                text = "\n".join(
-                    f"[bg:{item['task_id']}] {item['status']}: {item['result']}" for item in background_notifications
-                )
-                session.messages.append(make_user_text_message(f"<background-results>\n{text}\n</background-results>"))
-            inbox = self.bus.read_inbox("lead")
-            if inbox:
-                session.messages.append(make_user_text_message(f"<inbox>{json.dumps(inbox, ensure_ascii=False, indent=2)}</inbox>"))
+        try:
+            for _ in range(self.settings.runtime.max_agent_rounds):
+                self._raise_if_interrupted(should_interrupt)
+                microcompact(session.messages)
+                if estimate_tokens(session.messages) > self.settings.runtime.token_threshold:
+                    session.messages = self.compact_manager.auto_compact(session.id, session.messages)
+                background_notifications = self.background_manager.drain()
+                if background_notifications:
+                    text = "\n".join(
+                        f"[bg:{item['task_id']}] {item['status']}: {item['result']}" for item in background_notifications
+                    )
+                    session.messages.append(make_user_text_message(f"<background-results>\n{text}\n</background-results>"))
+                inbox = self.bus.read_inbox("lead")
+                if inbox:
+                    session.messages.append(make_user_text_message(f"<inbox>{json.dumps(inbox, ensure_ascii=False, indent=2)}</inbox>"))
 
-            turn = self.complete(
-                self.build_system_prompt(),
-                session.messages,
-                self.registry.schemas(),
-                text_callback=text_callback,
-            )
-            session.latest_turn_id = uuid.uuid4().hex[:8]
-            assistant_message = turn.as_message()
-            session.messages.append(assistant_message)
-            self.transcript_store.append(session.id, assistant_message)
-            if not turn.has_tool_calls():
-                final_text = "\n\n".join(turn.text_blocks).strip()
-                self._capture_turn_file_changes(session)
+                callback = text_callback
+                if text_callback is not None or should_interrupt is not None:
+                    def interruptible_callback(text: str) -> None:
+                        self._raise_if_interrupted(should_interrupt)
+                        if text_callback is not None:
+                            text_callback(text)
+                        self._raise_if_interrupted(should_interrupt)
+                    callback = interruptible_callback
+
+                turn = self.complete(
+                    self.build_system_prompt(),
+                    session.messages,
+                    self.registry.schemas(),
+                    text_callback=callback,
+                )
+                self._raise_if_interrupted(should_interrupt)
+                session.latest_turn_id = uuid.uuid4().hex[:8]
+                assistant_message = turn.as_message()
+                session.messages.append(assistant_message)
+                self.transcript_store.append(session.id, assistant_message)
+                if not turn.has_tool_calls():
+                    final_text = "\n\n".join(turn.text_blocks).strip()
+                    self._capture_turn_file_changes(session)
+                    self.session_manager.save(session)
+                    return final_text
+
+                tool_results: list[dict[str, Any]] = []
+                used_todo = False
+                manual_compact = False
+                for tool_call in turn.tool_calls:
+                    self._raise_if_interrupted(should_interrupt)
+                    ctx = ToolExecutionContext(
+                        runtime=self,
+                        session=session,
+                        actor="lead",
+                        trace_id=f"{session.id}-{session.latest_turn_id}",
+                    )
+                    if tool_call.name == "compress":
+                        manual_compact = True
+                    try:
+                        output = self.registry.execute(ctx, tool_call.name, tool_call.input)
+                    except Exception as exc:
+                        output = f"Error: {exc}"
+                    self.print_tool_event("lead", tool_call.name, tool_call.input, output)
+                    result = {
+                        "type": "tool_result",
+                        "tool_call_id": tool_call.id,
+                        "content": str(output)[: self.settings.runtime.max_tool_output_chars],
+                    }
+                    tool_results.append(result)
+                    self.transcript_store.append(
+                        session.id,
+                        {
+                            "role": "tool",
+                            "name": tool_call.name,
+                            "input": tool_call.input,
+                            "output": result["content"],
+                        },
+                    )
+                    if tool_call.name == "TodoWrite":
+                        used_todo = True
+
+                session.rounds_without_todo = 0 if used_todo else session.rounds_without_todo + 1
+                if self.todo_manager.has_open_items(session) and session.rounds_without_todo >= 3:
+                    tool_results.insert(0, {"type": "text", "text": "<reminder>Update your todos.</reminder>"})
+                session.messages.append(make_tool_result_message(tool_results))
+                if manual_compact:
+                    session.messages = self.compact_manager.auto_compact(session.id, session.messages)
                 self.session_manager.save(session)
-                return final_text
-
-            tool_results: list[dict[str, Any]] = []
-            used_todo = False
-            manual_compact = False
-            for tool_call in turn.tool_calls:
-                ctx = ToolExecutionContext(
-                    runtime=self,
-                    session=session,
-                    actor="lead",
-                    trace_id=f"{session.id}-{session.latest_turn_id}",
-                )
-                if tool_call.name == "compress":
-                    manual_compact = True
-                try:
-                    output = self.registry.execute(ctx, tool_call.name, tool_call.input)
-                except Exception as exc:
-                    output = f"Error: {exc}"
-                self.print_tool_event("lead", tool_call.name, tool_call.input, output)
-                result = {
-                    "type": "tool_result",
-                    "tool_call_id": tool_call.id,
-                    "content": str(output)[: self.settings.runtime.max_tool_output_chars],
-                }
-                tool_results.append(result)
-                self.transcript_store.append(
-                    session.id,
-                    {
-                        "role": "tool",
-                        "name": tool_call.name,
-                        "input": tool_call.input,
-                        "output": result["content"],
-                    },
-                )
-                if tool_call.name == "TodoWrite":
-                    used_todo = True
-
-            session.rounds_without_todo = 0 if used_todo else session.rounds_without_todo + 1
-            if self.todo_manager.has_open_items(session) and session.rounds_without_todo >= 3:
-                tool_results.insert(0, {"type": "text", "text": "<reminder>Update your todos.</reminder>"})
-            session.messages.append(make_tool_result_message(tool_results))
-            if manual_compact:
-                session.messages = self.compact_manager.auto_compact(session.id, session.messages)
+            self._capture_turn_file_changes(session)
             self.session_manager.save(session)
-        self._capture_turn_file_changes(session)
-        self.session_manager.save(session)
-        return final_text or "Stopped after max rounds."
+            return final_text or "Stopped after max rounds."
+        except TurnInterrupted:
+            session.pending_file_changes = []
+            session.last_turn_file_changes = []
+            self.session_manager.save(session)
+            raise
 
     def doctor(self) -> str:
         lines = [
