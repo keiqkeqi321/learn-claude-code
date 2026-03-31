@@ -189,6 +189,40 @@ def _history_file(workspace_root: Path) -> Path:
     return history_dir / "repl_history.txt"
 
 
+def _apply_current_completion(buffer) -> bool:
+    complete_state = getattr(buffer, "complete_state", None)
+    if not complete_state:
+        return False
+    completion = complete_state.current_completion
+    if completion is None and complete_state.completions:
+        completion = complete_state.completions[0]
+    if completion is None:
+        return False
+    buffer.apply_completion(completion)
+    return True
+
+
+def _accept_inline_suggestion(buffer) -> bool:
+    suggestion = getattr(buffer, "suggestion", None)
+    text = getattr(suggestion, "text", "") if suggestion is not None else ""
+    if not text:
+        return False
+    buffer.insert_text(text)
+    return True
+
+
+def _handle_tab_action(buffer) -> bool:
+    if _accept_inline_suggestion(buffer):
+        return True
+    if _apply_current_completion(buffer):
+        return True
+    start_completion = getattr(buffer, "start_completion", None)
+    if start_completion is None:
+        return False
+    start_completion(select_first=True)
+    return _apply_current_completion(buffer)
+
+
 def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
     bindings = KeyBindings()
 
@@ -226,6 +260,13 @@ def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
             buffer.complete_next()
             return
         buffer.auto_down()
+
+    @bindings.add("tab")
+    def _handle_tab(event) -> None:
+        buffer = event.current_buffer
+        if _handle_tab_action(buffer):
+            return
+        buffer.insert_text("    ")
 
     return PromptSession(
         history=FileHistory(str(_history_file(workspace_root))),
