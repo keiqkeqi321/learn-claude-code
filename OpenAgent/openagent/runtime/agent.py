@@ -47,8 +47,7 @@ from openagent.tools.todo import TodoManager, register_todo_tool
 
 
 class OpenAgentRuntime:
-    TOOL_RESULT_PREVIEW_LINES = 20
-    TOOL_PREVIEW_LINE_WIDTH = 160
+    TOOL_VALUE_PREVIEW_CHARS = 90
     _ansi_output_enabled: bool | None = None
 
     """OpenAgent 运行时类.
@@ -126,18 +125,15 @@ class OpenAgentRuntime:
         )
         if not sys.stdout.isatty():
             return log_entry["id"]
-        border = self._tool_border(f"{'=' * 18} {category} {actor} {'=' * 18}", category)
+        border = f"{'=' * 18} {category} {actor} {'=' * 18}"
         name_line = f"Name: {tool_name}"
         args_text = self._stringify_tool_value(tool_input)
         result_text = self._stringify_tool_value(output)
         args_preview, args_hidden = self._preview_tool_text(args_text)
-        result_preview, result_hidden = self._preview_tool_text(
-            result_text,
-            max_chars=self.settings.runtime.max_tool_output_chars,
-        )
+        result_preview, result_hidden = self._preview_tool_text(result_text)
         has_hidden_content = args_hidden or result_hidden
         print()
-        print(border)
+        self._print_tool_border(border, category)
         if has_hidden_content:
             print(f"View by: /toollog {log_entry['id']}")
         print(name_line)
@@ -145,24 +141,25 @@ class OpenAgentRuntime:
         print(args_preview)
         print("Result:")
         print(result_preview)
-        print(self._tool_border("=" * len("================== TOOL lead =================="), category))
+        self._print_tool_border("=" * len("================== TOOL lead =================="), category)
         print()
         return log_entry["id"]
 
-    def _tool_border(self, text: str, category: str) -> str:
-        if not self._supports_ansi_output():
-            return text
-        color = "\x1b[38;5;214m" if category == "MCP" else "\x1b[38;5;111m"
-        return f"{color}{text}\x1b[0m"
+    def _print_tool_border(self, text: str, category: str) -> None:
+        if self._supports_ansi_output():
+            color = "\x1b[38;5;214m" if category == "MCP" else "\x1b[38;5;111m"
+            print(f"{color}{text}\x1b[0m")
+            return
+        print(text)
+
+    def _stdout_is_prompt_toolkit_proxy(self) -> bool:
+        stdout_type = type(sys.stdout)
+        return stdout_type.__module__ == "prompt_toolkit.patch_stdout" and stdout_type.__name__ == "StdoutProxy"
 
     def _supports_ansi_output(self) -> bool:
         if self._ansi_output_enabled is not None:
             return self._ansi_output_enabled
         if not sys.stdout.isatty():
-            self._ansi_output_enabled = False
-            return False
-        stdout_type = type(sys.stdout)
-        if stdout_type.__module__ == "prompt_toolkit.patch_stdout" and stdout_type.__name__ == "StdoutProxy":
             self._ansi_output_enabled = False
             return False
         if sys.platform != "win32":
@@ -192,34 +189,19 @@ class OpenAgentRuntime:
 
     def _stringify_tool_value(self, value: Any) -> str:
         if isinstance(value, str):
-            return value
+            return " ".join(value.split())
         try:
-            return json.dumps(value, ensure_ascii=False, indent=2)
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         except TypeError:
-            return str(value)
+            return " ".join(str(value).split())
 
-    def _preview_tool_text(self, text: str, *, max_chars: int | None = None) -> tuple[str, bool]:
-        hidden = False
-        if max_chars is not None and len(text) > max_chars:
-            text = text[:max_chars] + "\n... [truncated]"
-            hidden = True
-        raw_lines = text.splitlines() or [text]
-        lines: list[str] = []
-        for line in raw_lines:
-            preview_line, line_hidden = self._truncate_preview_line(line)
-            hidden = hidden or line_hidden
-            lines.append(preview_line)
-        if not lines:
-            return "(no output)", hidden
-        if len(lines) <= self.TOOL_RESULT_PREVIEW_LINES:
-            return "\n".join(lines), hidden
-        preview = "\n".join(lines[: self.TOOL_RESULT_PREVIEW_LINES])
-        return preview + "\n...", True
-
-    def _truncate_preview_line(self, line: str) -> tuple[str, bool]:
-        if len(line) <= self.TOOL_PREVIEW_LINE_WIDTH:
-            return line, False
-        return line[: self.TOOL_PREVIEW_LINE_WIDTH - 3] + "...", True
+    def _preview_tool_text(self, text: str) -> tuple[str, bool]:
+        compact = " ".join(text.split())
+        if not compact:
+            return "(no output)", False
+        if len(compact) <= self.TOOL_VALUE_PREVIEW_CHARS:
+            return compact, False
+        return compact[: self.TOOL_VALUE_PREVIEW_CHARS - 3] + "...", True
 
     def recent_tool_logs(self, limit: int = 10) -> str:
         entries = self.tool_log_store.list_recent(limit=limit)

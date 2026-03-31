@@ -261,7 +261,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
     print(f"[session {session.id}]")
     if resumed:
         _print_resumed_history(session)
-    prompt_context = patch_stdout() if prompt_session is not None and patch_stdout is not None else nullcontext()
+    prompt_context = patch_stdout(raw=True) if prompt_session is not None and patch_stdout is not None else nullcontext()
     with prompt_context:
         while True:
             try:
