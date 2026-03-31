@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from unittest.mock import patch
 
 from openagent.config.models import ProviderProfileSettings, ProviderSettings
 from openagent.runtime.agent import OpenAgentRuntime
+from openagent.runtime.session import AgentSession
 
 
 class RuntimeToolOutputTests(unittest.TestCase):
@@ -62,6 +64,45 @@ class RuntimeToolOutputTests(unittest.TestCase):
             rendered.index("openagent/config/settings.py +67 -0"),
         )
         self.assertNotIn("TOOL lead", rendered)
+
+    def test_print_last_turn_file_summary_shows_undo_hint(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime._supports_ansi_output = lambda: False
+        session = AgentSession(
+            id="session-1",
+            last_turn_file_changes=[
+                {
+                    "path": "greet.py",
+                    "absolute_path": "D:/workspace/greet.py",
+                    "added_lines": 6,
+                    "removed_lines": 0,
+                }
+            ],
+        )
+
+        class _Stdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdout = _Stdout()
+        with patch("sys.stdout", fake_stdout):
+            printed = OpenAgentRuntime.print_last_turn_file_summary(runtime, session)
+
+        rendered = fake_stdout.getvalue()
+        self.assertTrue(printed)
+        self.assertIn("Changed files", rendered)
+        self.assertIn("Undo by: /undo", rendered)
+        self.assertIn("greet.py +6 -0", rendered)
+
+    def test_clickable_file_label_uses_hyperlink_and_blue_text_when_ansi_enabled(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime._supports_ansi_output = lambda: True
+
+        rendered = OpenAgentRuntime._format_clickable_file_label(runtime, "greet.py", "D:/workspace/greet.py")
+
+        self.assertIn("greet.py", rendered)
+        self.assertIn("\x1b]8;;file:///", rendered)
+        self.assertIn("\x1b[38;5;39m", rendered)
 
     def test_build_system_prompt_includes_environment_guidance(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
@@ -119,6 +160,39 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertEqual(runtime.compact_manager.model_max_tokens, 4096)
         self.assertEqual(runtime.settings.provider_profiles["openai"].default_model, "gpt-4.1-mini")
         mock_persist.assert_called_once_with(runtime.settings, "openai", "gpt-4.1-mini")
+
+    def test_undo_last_turn_restores_previous_file_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "greet.py"
+            target.write_text("new\n", encoding="utf-8")
+            runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+            runtime.settings = SimpleNamespace(workspace_root=root)
+            runtime.session_manager = SimpleNamespace(save=lambda session: None)
+            session = AgentSession(
+                id="session-1",
+                undo_stack=[
+                    {
+                        "turn_id": "turn-1",
+                        "files": [
+                            {
+                                "path": "greet.py",
+                                "absolute_path": str(target),
+                                "existed_before": True,
+                                "previous_content": "old\n",
+                            }
+                        ],
+                    }
+                ],
+                last_turn_file_changes=[{"path": "greet.py", "added_lines": 1, "removed_lines": 1}],
+            )
+
+            message = OpenAgentRuntime.undo_last_turn(runtime, session)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "old\n")
+            self.assertEqual(session.undo_stack, [])
+            self.assertEqual(session.last_turn_file_changes, [])
+            self.assertIn("Undid 1 file change", message)
 
 
 if __name__ == "__main__":

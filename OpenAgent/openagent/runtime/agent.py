@@ -34,6 +34,7 @@ from openagent.skills.loader import SkillLoader
 from openagent.storage.inbox import InboxStore
 from openagent.storage.jobs import JobStore
 from openagent.storage.sessions import SessionStore
+from openagent.storage.common import atomic_write_text
 from openagent.storage.tasks import TaskStore
 from openagent.storage.team import TeamStore
 from openagent.storage.tool_logs import ToolLogStore
@@ -52,6 +53,7 @@ from openagent.tools.todo import TodoManager, register_todo_tool
 class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
     SILENT_TOOL_NAMES = {"TodoWrite"}
+    MAX_UNDO_TURNS = 10
     _ansi_output_enabled: bool | None = None
     DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
         "You are {name}, a top-rated AI assistant.\n"
@@ -195,7 +197,90 @@ class OpenAgentRuntime:
             file_uri = Path(absolute_path).resolve().as_uri()
         except Exception:
             return label
-        return f"\x1b]8;;{file_uri}\x1b\\{label}\x1b]8;;\x1b\\"
+        blue_label = f"\x1b[38;5;39m{label}\x1b[0m"
+        return f"\x1b]8;;{file_uri}\x1b\\{blue_label}\x1b]8;;\x1b\\"
+
+    def _summarize_file_changes(self, file_changes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        summary_by_path: dict[str, dict[str, Any]] = {}
+        for item in file_changes:
+            path = str(item.get("path", "")).strip()
+            if not path:
+                continue
+            current = summary_by_path.setdefault(
+                path,
+                {
+                    "path": path,
+                    "absolute_path": str(item.get("absolute_path", "")).strip(),
+                    "added_lines": 0,
+                    "removed_lines": 0,
+                },
+            )
+            current["added_lines"] += int(item.get("added_lines", 0))
+            current["removed_lines"] += int(item.get("removed_lines", 0))
+            if not current["absolute_path"]:
+                current["absolute_path"] = str(item.get("absolute_path", "")).strip()
+        return list(summary_by_path.values())
+
+    def _capture_turn_file_changes(self, session: AgentSession) -> None:
+        pending = list(getattr(session, "pending_file_changes", []) or [])
+        session.pending_file_changes = []
+        if not pending:
+            session.last_turn_file_changes = []
+            return
+        session.last_turn_file_changes = self._summarize_file_changes(pending)
+        session.undo_stack.append(
+            {
+                "turn_id": session.latest_turn_id,
+                "files": pending,
+            }
+        )
+        if len(session.undo_stack) > self.MAX_UNDO_TURNS:
+            session.undo_stack = session.undo_stack[-self.MAX_UNDO_TURNS :]
+
+    def print_last_turn_file_summary(self, session: AgentSession) -> bool:
+        changes = list(getattr(session, "last_turn_file_changes", []) or [])
+        if not changes:
+            return False
+        print()
+        print("Changed files")
+        print("Undo by: /undo")
+        for item in changes:
+            path = str(item.get("path", "(unknown path)"))
+            absolute_path = str(item.get("absolute_path", "")).strip()
+            plus_text = f"+{int(item.get('added_lines', 0))}"
+            minus_text = f"-{int(item.get('removed_lines', 0))}"
+            path_text = self._format_clickable_file_label(path, absolute_path)
+            if self._supports_ansi_output():
+                plus_text = f"\x1b[32m{plus_text}\x1b[0m"
+                minus_text = f"\x1b[31m{minus_text}\x1b[0m"
+            print(f"{path_text} {plus_text} {minus_text}")
+        print()
+        return True
+
+    def undo_last_turn(self, session: AgentSession) -> str:
+        undo_stack = list(getattr(session, "undo_stack", []) or [])
+        if not undo_stack:
+            return "Nothing to undo."
+        entry = undo_stack.pop()
+        for item in reversed(entry.get("files", [])):
+            relative_path = str(item.get("path", "")).strip()
+            if not relative_path:
+                continue
+            path = (self.settings.workspace_root / relative_path).resolve()
+            if not path.is_relative_to(self.settings.workspace_root):
+                raise ValueError(f"Undo path escapes workspace: {relative_path}")
+            existed_before = bool(item.get("existed_before"))
+            previous_content = str(item.get("previous_content", ""))
+            if existed_before:
+                atomic_write_text(path, previous_content)
+            elif path.exists():
+                path.unlink()
+        session.undo_stack = undo_stack
+        session.last_turn_file_changes = []
+        session.pending_file_changes = []
+        self.session_manager.save(session)
+        file_count = len(entry.get("files", []))
+        return f"Undid {file_count} file change(s) from the most recent change set."
 
     def _stdout_is_prompt_toolkit_proxy(self) -> bool:
         stdout_type = type(sys.stdout)
@@ -581,6 +666,8 @@ class OpenAgentRuntime:
         self.session_manager.save(session)
 
     def run_turn(self, session: AgentSession, user_input: str, text_callback=None) -> str:
+        session.pending_file_changes = []
+        session.last_turn_file_changes = []
         session.messages.append(make_user_text_message(user_input))
         self.transcript_store.append(session.id, {"role": "user", "content": user_input})
         return self._agent_loop(session, text_callback=text_callback)
@@ -613,6 +700,7 @@ class OpenAgentRuntime:
             self.transcript_store.append(session.id, assistant_message)
             if not turn.has_tool_calls():
                 final_text = "\n\n".join(turn.text_blocks).strip()
+                self._capture_turn_file_changes(session)
                 self.session_manager.save(session)
                 return final_text
 
@@ -658,6 +746,8 @@ class OpenAgentRuntime:
             if manual_compact:
                 session.messages = self.compact_manager.auto_compact(session.id, session.messages)
             self.session_manager.save(session)
+        self._capture_turn_file_changes(session)
+        self.session_manager.save(session)
         return final_text or "Stopped after max rounds."
 
     def doctor(self) -> str:

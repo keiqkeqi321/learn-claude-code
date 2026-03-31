@@ -23,6 +23,7 @@ from prompt_toolkit.widgets import Button, Dialog, Label, RadioList
 
 COMMAND_SPECS = [
     ("/model", "Choose the active provider and model"),
+    ("/undo", "Undo the most recent file change set"),
     ("/compact", "Compact the current session context"),
     ("/tasks", "Show persistent tasks"),
     ("/team", "Show teammate roster and states"),

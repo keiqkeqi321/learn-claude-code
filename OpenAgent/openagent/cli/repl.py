@@ -185,6 +185,7 @@ class TurnQueueRunner:
                     print()
                     print(response)
                     print()
+                self.runtime.print_last_turn_file_summary(self.session)
             except Exception as exc:
                 print(f"[turn failed] {exc}")
                 print()
@@ -383,6 +384,12 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     continue
                 runtime.compact_session(session)
                 print("[manual compact complete]")
+                continue
+            if stripped == "/undo":
+                if runner.has_inflight_work():
+                    print("[busy; wait for queued responses before /undo]")
+                    continue
+                print(runtime.undo_last_turn(session))
                 continue
             if stripped == "/model":
                 if runner.has_inflight_work():
