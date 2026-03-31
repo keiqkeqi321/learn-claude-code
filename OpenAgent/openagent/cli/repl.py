@@ -329,6 +329,24 @@ def _handle_model_command(runtime) -> None:
     print(runtime.switch_provider_model(selected_provider, selected_model))
 
 
+def _handle_undo_command(runtime, session) -> None:
+    undo_stack = list(getattr(session, "undo_stack", []) or [])
+    if not undo_stack:
+        print("Nothing to undo.")
+        return
+    selection = choose_item_interactively(
+        "Confirm Undo",
+        "Undo the most recent file change set?",
+        [
+            ("cancel", "Cancel (default)"),
+            ("confirm", "Confirm undo"),
+        ],
+    )
+    if selection != "confirm":
+        return
+    print(runtime.undo_last_turn(session))
+
+
 def run_repl(runtime, session, resumed: bool = False) -> int:
     prompt_session = None
     try:
@@ -389,7 +407,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                 if runner.has_inflight_work():
                     print("[busy; wait for queued responses before /undo]")
                     continue
-                print(runtime.undo_last_turn(session))
+                _handle_undo_command(runtime, session)
                 continue
             if stripped == "/model":
                 if runner.has_inflight_work():

@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from openagent.cli.repl import TurnQueueRunner, _handle_model_command
+from openagent.cli.repl import TurnQueueRunner, _handle_model_command, _handle_undo_command
 
 
 def _render_prompt_text(fragments) -> str:
@@ -68,6 +68,28 @@ class ReplTodoTests(unittest.TestCase):
             _handle_model_command(runtime)
 
         mock_print.assert_called_with("switched anthropic:glm-5")
+
+    def test_undo_command_confirms_before_running(self) -> None:
+        runtime = SimpleNamespace(undo_last_turn=lambda session: "undid last change set")
+        session = SimpleNamespace(undo_stack=[{"turn_id": "turn-1"}])
+
+        with patch("openagent.cli.repl.choose_item_interactively", return_value="confirm"), patch(
+            "builtins.print"
+        ) as mock_print:
+            _handle_undo_command(runtime, session)
+
+        mock_print.assert_called_with("undid last change set")
+
+    def test_undo_command_cancels_by_default_without_action(self) -> None:
+        runtime = SimpleNamespace(undo_last_turn=lambda session: "should not run")
+        session = SimpleNamespace(undo_stack=[{"turn_id": "turn-1"}])
+
+        with patch("openagent.cli.repl.choose_item_interactively", return_value="cancel"), patch(
+            "builtins.print"
+        ) as mock_print:
+            _handle_undo_command(runtime, session)
+
+        mock_print.assert_not_called()
 
 
 if __name__ == "__main__":
