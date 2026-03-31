@@ -27,6 +27,7 @@ from openagent.providers.base import LLMProvider
 from openagent.providers.openai_provider import OpenAIProvider
 from openagent.runtime.compact import CompactManager, estimate_tokens, microcompact
 from openagent.runtime.execution_mode import (
+    AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
     execution_mode_spec,
     tool_block_message,
@@ -105,6 +106,9 @@ class OpenAgentRuntime:
         """
         self.settings = settings
         self.execution_mode = DEFAULT_EXECUTION_MODE
+        self.authorization_request_handler = None
+        self._workspace_authorized_tools: set[str] = set()
+        self._once_authorized_tools: dict[str, int] = {}
         self.provider = self._make_provider()
         self.transcript_store = TranscriptStore(settings.storage.transcripts_dir)
         self.session_manager = SessionManager(SessionStore(settings.storage.sessions_dir), self.transcript_store)
@@ -382,7 +386,55 @@ class OpenAgentRuntime:
         return dict(self.settings.provider_profiles)
 
     def authorize_tool_call(self, tool_name: str, payload: dict[str, Any], *, ctx=None) -> str | None:
+        if tool_name == AUTHORIZATION_TOOL_NAME:
+            return None
+        if tool_name in self._workspace_authorized_tools:
+            return None
+        remaining = self._once_authorized_tools.get(tool_name, 0)
+        if remaining > 0:
+            if remaining == 1:
+                self._once_authorized_tools.pop(tool_name, None)
+            else:
+                self._once_authorized_tools[tool_name] = remaining - 1
+            return None
         return tool_block_message(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE), tool_name)
+
+    def request_authorization(self, tool_name: str, reason: str, argument_summary: str = "") -> str:
+        normalized_tool = str(tool_name).strip()
+        if not normalized_tool:
+            return "Authorization request failed: tool_name is required."
+        if normalized_tool == AUTHORIZATION_TOOL_NAME:
+            return "Authorization not required for request_authorization."
+        if normalized_tool in self._workspace_authorized_tools:
+            return json.dumps(
+                {"status": "approved", "scope": "workspace", "tool_name": normalized_tool, "cached": True},
+                ensure_ascii=False,
+            )
+        handler = self.authorization_request_handler
+        if not callable(handler):
+            return "Authorization request failed: interactive approvals are unavailable in this session."
+        result = handler(
+            tool_name=normalized_tool,
+            reason=str(reason).strip(),
+            argument_summary=str(argument_summary).strip(),
+            execution_mode=getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE),
+        )
+        if not isinstance(result, dict):
+            return "Authorization request failed: invalid approval response."
+        status = str(result.get("status", "denied")).strip().lower()
+        scope = str(result.get("scope", "deny")).strip().lower()
+        if status == "approved":
+            if scope == "workspace":
+                self._workspace_authorized_tools.add(normalized_tool)
+            elif scope == "once":
+                self._once_authorized_tools[normalized_tool] = self._once_authorized_tools.get(normalized_tool, 0) + 1
+        payload = {
+            "status": "approved" if status == "approved" else "denied",
+            "scope": scope,
+            "tool_name": normalized_tool,
+            "reason": str(result.get("reason", "")).strip(),
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     def switch_provider_model(self, provider_name: str, model: str) -> str:
         normalized_provider = provider_name.strip().lower()
@@ -439,6 +491,29 @@ class OpenAgentRuntime:
                     "required": ["name"],
                 },
                 handler=lambda ctx, payload: self.skill_loader.load(payload["name"]),
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name=AUTHORIZATION_TOOL_NAME,
+                description=(
+                    "Request user approval for a blocked tool call. "
+                    "Use this before edits in read-only modes or before broader tools in accept-edits mode."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "tool_name": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "argument_summary": {"type": "string"},
+                    },
+                    "required": ["tool_name", "reason"],
+                },
+                handler=lambda ctx, payload: self.request_authorization(
+                    payload["tool_name"],
+                    payload["reason"],
+                    payload.get("argument_summary", ""),
+                ),
             )
         )
         registry.register(

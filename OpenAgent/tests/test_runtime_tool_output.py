@@ -129,6 +129,8 @@ class RuntimeToolOutputTests(unittest.TestCase):
     def test_authorize_tool_call_blocks_non_edit_tools_in_accept_edits_mode(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.execution_mode = "accept_edits"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
 
         blocked = OpenAgentRuntime.authorize_tool_call(runtime, "bash", {"command": "git status"})
         allowed = OpenAgentRuntime.authorize_tool_call(runtime, "write_file", {"path": "demo.txt", "content": "ok"})
@@ -139,10 +141,48 @@ class RuntimeToolOutputTests(unittest.TestCase):
     def test_authorize_tool_call_blocks_file_edits_in_plan_mode(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.execution_mode = "plan"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
 
         blocked = OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"})
 
         self.assertIn("workspace files are read-only", blocked)
+
+    def test_request_authorization_grants_once_and_is_consumed(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+        runtime.authorization_request_handler = lambda **kwargs: {
+            "status": "approved",
+            "scope": "once",
+            "reason": "Allowed once.",
+        }
+
+        result = OpenAgentRuntime.request_authorization(runtime, "bash", "Need one shell command")
+
+        self.assertIn('"status": "approved"', result)
+        self.assertIsNone(OpenAgentRuntime.authorize_tool_call(runtime, "bash", {"command": "git status"}))
+        self.assertIn(
+            "requires explicit user approval",
+            OpenAgentRuntime.authorize_tool_call(runtime, "bash", {"command": "git status"}),
+        )
+
+    def test_request_authorization_grants_workspace_scope(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+        runtime.authorization_request_handler = lambda **kwargs: {
+            "status": "approved",
+            "scope": "workspace",
+            "reason": "Allowed in this workspace.",
+        }
+
+        result = OpenAgentRuntime.request_authorization(runtime, "edit_file", "Need to patch a file")
+
+        self.assertIn('"scope": "workspace"', result)
+        self.assertIsNone(OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"}))
 
     def test_switch_provider_model_updates_runtime_and_compact_manager(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

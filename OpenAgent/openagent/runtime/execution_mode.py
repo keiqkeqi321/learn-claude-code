@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEFAULT_EXECUTION_MODE = "accept_edits"
+AUTHORIZATION_TOOL_NAME = "request_authorization"
 EXECUTION_MODE_ORDER = ("shortcuts", "plan", "accept_edits", "yolo")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
         "read_file",
         "load_skill",
         "compress",
+        AUTHORIZATION_TOOL_NAME,
         "TodoWrite",
         "task_get",
         "task_list",
@@ -45,7 +47,7 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "- Current mode: ? for shortcuts.\n"
             "- Keep workspace files read-only.\n"
             "- Use lightweight, read-only tools only.\n"
-            "- Do not edit files or run autonomous external-effect tools."
+            "- Call request_authorization before asking for edits or broader tool access."
         ),
     ),
     "plan": ExecutionModeSpec(
@@ -59,7 +61,8 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "- Current mode: ⏸ plan mode on.\n"
             "- Keep workspace files read-only.\n"
             "- Inspect context with read-only tools when needed.\n"
-            "- Return a concrete implementation plan before asking for a higher-permission mode."
+            "- Return a concrete implementation plan before asking for a higher-permission mode.\n"
+            "- If execution is needed after planning, call request_authorization first."
         ),
     ),
     "accept_edits": ExecutionModeSpec(
@@ -73,6 +76,7 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "- Current mode: ⏵⏵ accept edits on.\n"
             "- You may edit workspace files with write_file and edit_file.\n"
             "- Treat other tools as requiring explicit user approval.\n"
+            "- Call request_authorization before using a blocked non-edit tool.\n"
             "- If broader autonomy is required, ask the user to switch to ! Yolo."
         ),
     ),
@@ -115,6 +119,8 @@ def tool_block_message(mode: str | None, tool_name: str) -> str | None:
     spec = execution_mode_spec(mode)
     if spec.key == "yolo":
         return None
+    if tool_name == AUTHORIZATION_TOOL_NAME:
+        return None
     if tool_name in READ_ONLY_TOOL_NAMES:
         return None
     if spec.key == "accept_edits" and tool_name in FILE_EDIT_TOOL_NAMES:
@@ -122,14 +128,14 @@ def tool_block_message(mode: str | None, tool_name: str) -> str | None:
     if tool_name in FILE_EDIT_TOOL_NAMES:
         return (
             f"Blocked in {spec.title}: workspace files are read-only. "
-            "Switch to ⏵⏵ accept edits on or ! Yolo."
+            "Call request_authorization or switch to ⏵⏵ accept edits on / ! Yolo."
         )
     return (
         f"Blocked in {spec.title}: '{tool_name}' requires broader tool access. "
-        "Switch to ! Yolo for full autonomy."
+        "Call request_authorization or switch to ! Yolo for full autonomy."
         if spec.key != "accept_edits"
         else (
             f"Blocked in {spec.title}: '{tool_name}' still requires explicit user approval. "
-            "Switch to ! Yolo for full autonomy."
+            "Call request_authorization or switch to ! Yolo for full autonomy."
         )
     )

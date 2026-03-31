@@ -396,6 +396,35 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
     return choose_item_interactively("Resume Session", "Choose a previous session to resume.", items)
 
 
+def choose_authorization_interactively(
+    tool_name: str,
+    reason: str,
+    *,
+    argument_summary: str = "",
+    mode_label: str = "",
+) -> str | None:
+    details = [
+        "A tool needs your approval before the agent can continue.",
+        f"Tool: {tool_name}",
+    ]
+    if mode_label:
+        details.append(f"Mode: {mode_label}")
+    if reason:
+        details.append(f"Reason: {reason}")
+    if argument_summary:
+        details.append(f"Request: {argument_summary}")
+    details.append("Choose how broadly to allow it.")
+    return choose_item_interactively(
+        "Authorize Tool",
+        "\n".join(details),
+        [
+            ("once", "Allow once"),
+            ("workspace", "Allow in this workspace"),
+            ("deny", "Do not allow"),
+        ],
+    )
+
+
 def format_session_timestamp(timestamp: float | None) -> str:
     if not timestamp:
         return "unknown time"

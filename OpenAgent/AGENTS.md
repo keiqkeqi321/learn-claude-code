@@ -49,6 +49,12 @@ The runtime owns:
   - `! Yolo`: full autonomy
 - `Shift+Tab` cycles execution modes in the REPL.
 - The active execution mode is shown under `openagent >>` with color-coded risk.
+- When a needed tool is blocked by the current mode, the agent can call `request_authorization`.
+- Authorization prompts should offer:
+  - allow once
+  - allow in this workspace
+  - deny
+- After the user answers an authorization prompt, the agent should continue the same task without requiring the user to restate it.
 - Empty or incomplete sessions should not appear in resume history. A session must include both a visible user message and a visible assistant reply.
 - `TodoWrite` updates session-scoped todos.
 - Todos are shown persistently in the REPL status area above `openagent >>` while any item is still open.

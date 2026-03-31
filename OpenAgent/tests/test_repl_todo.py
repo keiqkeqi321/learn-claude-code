@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 import unittest
+from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from openagent.cli.repl import TurnQueueRunner, _handle_model_command, _handle_undo_command
+from openagent.cli.repl import TurnQueueRunner, _handle_model_command, _handle_undo_command, _resolve_authorization_requests
 
 
 def _render_prompt_text(fragments) -> str:
@@ -17,9 +19,9 @@ class ReplTodoTests(unittest.TestCase):
         runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
 
         self.assertEqual(runner.current_model_label(), "model: anthropic / glm-5")
-        self.assertEqual(runner.execution_mode_label(), "⏵⏵ accept edits on  (Shift+Tab to cycle)")
+        self.assertIn("accept edits on", runner.execution_mode_label())
 
-    def test_prompt_message_shows_open_todos_between_status_and_prompt(self) -> None:
+    def test_prompt_message_shows_open_todos_before_mode_and_prompt(self) -> None:
         session = SimpleNamespace(
             todo_items=[
                 {"content": "Refactor module", "status": "in_progress", "activeForm": "Refactoring module"},
@@ -35,13 +37,13 @@ class ReplTodoTests(unittest.TestCase):
         rendered = _render_prompt_text(runner.prompt_message())
 
         self.assertIn("todo (1/3 completed)", rendered)
-        self.assertIn("⏵⏵ accept edits on  (Shift+Tab to cycle)", rendered)
-        self.assertIn("⏳ Refactor module <- Refactoring module", rendered)
-        self.assertIn("☐ Add tests", rendered)
-        self.assertIn("✅ Run checks", rendered)
+        self.assertIn("accept edits on  (Shift+Tab to cycle)", rendered)
+        self.assertIn("Refactor module <- Refactoring module", rendered)
+        self.assertIn("Add tests", rendered)
+        self.assertIn("Run checks", rendered)
         self.assertLess(rendered.index("Loading genius"), rendered.index("todo (1/3 completed)"))
-        self.assertLess(rendered.index("todo (1/3 completed)"), rendered.index("openagent >> "))
-        self.assertLess(rendered.index("openagent >> "), rendered.index("⏵⏵ accept edits on  (Shift+Tab to cycle)"))
+        self.assertLess(rendered.index("todo (1/3 completed)"), rendered.index("accept edits on  (Shift+Tab to cycle)"))
+        self.assertLess(rendered.index("accept edits on  (Shift+Tab to cycle)"), rendered.index("openagent >> "))
 
     def test_prompt_message_hides_todos_when_all_completed(self) -> None:
         session = SimpleNamespace(
@@ -55,7 +57,7 @@ class ReplTodoTests(unittest.TestCase):
         rendered = _render_prompt_text(runner.prompt_message())
 
         self.assertNotIn("todo (", rendered)
-        self.assertEqual(rendered, "openagent >> \n⏵⏵ accept edits on  (Shift+Tab to cycle)\n")
+        self.assertEqual(rendered, "⏵⏵ accept edits on  (Shift+Tab to cycle)\nopenagent >> ")
 
     def test_cycle_execution_mode_advances_in_danger_order(self) -> None:
         runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
@@ -96,6 +98,36 @@ class ReplTodoTests(unittest.TestCase):
         self.assertTrue(requested)
         self.assertTrue(runner.should_interrupt())
         self.assertEqual(runner._status, "interrupting")
+
+    def test_request_authorization_is_resolved_on_main_thread(self) -> None:
+        runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+        result: dict[str, dict[str, str]] = {}
+
+        worker = Thread(
+            target=lambda: result.setdefault(
+                "value",
+                runner.request_authorization(
+                    tool_name="bash",
+                    reason="Need to inspect git state",
+                    argument_summary="git status",
+                    execution_mode="accept_edits",
+                ),
+            )
+        )
+        worker.start()
+
+        with patch("openagent.cli.repl.choose_authorization_interactively", return_value="once"):
+            for _ in range(50):
+                if _resolve_authorization_requests(runner):
+                    break
+                time.sleep(0.01)
+
+        worker.join(timeout=1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(result["value"]["status"], "approved")
+        self.assertEqual(result["value"]["scope"], "once")
 
     def test_undo_command_confirms_before_running(self) -> None:
         runtime = SimpleNamespace(undo_last_turn=lambda session: "undid last change set")

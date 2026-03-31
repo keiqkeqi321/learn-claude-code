@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import dataclass
 import json
 import random
 import sys
 import time
 from queue import Empty, Queue
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 
 from openagent.cli.commands import ConsoleStreamer
 from openagent.cli.prompting import (
     COMMAND_SPECS,
     PROMPT_TEXT,
+    choose_authorization_interactively,
     choose_item_interactively,
     create_prompt_session,
     fallback_prompt_message,
@@ -43,6 +45,7 @@ READ_ONLY_COMMAND_PREFIXES = (
     "/bg",
     "/help",
 )
+AUTHORIZATION_PROMPT_SENTINEL = "__openagent_authorization__"
 
 
 def _print_resumed_history(session) -> None:
@@ -71,6 +74,16 @@ def _print_resumed_history(session) -> None:
         print()
 
 
+@dataclass(slots=True)
+class AuthorizationRequest:
+    tool_name: str
+    reason: str
+    argument_summary: str
+    execution_mode: str
+    completed: Event
+    response: dict[str, str] | None = None
+
+
 class TurnQueueRunner:
     THINKING_PHRASES = (
         "AI is cooking",
@@ -96,10 +109,12 @@ class TurnQueueRunner:
         self._status = ""
         self._status_changed_at = time.monotonic()
         self._ui_invalidator = None
+        self._prompt_interrupter = None
         self._thinking_phrase = self.THINKING_PHRASES[0]
         self._next_query_id = 1
         self._queued_previews: list[tuple[int, str]] = []
         self._interrupt_requested = False
+        self._authorization_requests: list[AuthorizationRequest] = []
 
     def start(self) -> None:
         self._worker.start()
@@ -110,6 +125,9 @@ class TurnQueueRunner:
 
     def set_ui_invalidator(self, invalidator) -> None:
         self._ui_invalidator = invalidator
+
+    def set_prompt_interrupter(self, interrupter) -> None:
+        self._prompt_interrupter = interrupter
 
     def enqueue(self, query: str) -> tuple[bool, int]:
         with self._lock:
@@ -128,6 +146,39 @@ class TurnQueueRunner:
     def has_inflight_work(self) -> bool:
         active, queued = self.stats()
         return active or queued > 0
+
+    def request_authorization(
+        self,
+        *,
+        tool_name: str,
+        reason: str,
+        argument_summary: str = "",
+        execution_mode: str = DEFAULT_EXECUTION_MODE,
+    ) -> dict[str, str]:
+        request = AuthorizationRequest(
+            tool_name=tool_name,
+            reason=reason,
+            argument_summary=argument_summary,
+            execution_mode=execution_mode,
+            completed=Event(),
+        )
+        with self._lock:
+            self._authorization_requests.append(request)
+        self._invalidate_ui()
+        if self._prompt_interrupter is not None:
+            try:
+                self._prompt_interrupter()
+            except Exception:
+                pass
+        if not request.completed.wait(timeout=300):
+            return {"status": "denied", "scope": "deny", "reason": "Authorization request timed out."}
+        return request.response or {"status": "denied", "scope": "deny", "reason": "Authorization denied."}
+
+    def drain_authorization_requests(self) -> list[AuthorizationRequest]:
+        with self._lock:
+            pending = list(self._authorization_requests)
+            self._authorization_requests = []
+        return pending
 
     def close(self, *, drain: bool) -> int:
         dropped = 0
@@ -251,8 +302,8 @@ class TurnQueueRunner:
                 fragments.extend([(style, line), ("", "\n")])
             for index, queue_line in enumerate(queue_lines, start=1):
                 fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
+        fragments.extend([*mode_line, ("", "\n")])
         fragments.extend(prompt_line)
-        fragments.extend([("", "\n"), *mode_line, ("", "\n")])
         return fragments
 
     def current_model_label(self) -> str:
@@ -407,8 +458,30 @@ def _handle_undo_command(runtime, session) -> None:
     print(runtime.undo_last_turn(session))
 
 
+def _resolve_authorization_requests(runner: TurnQueueRunner) -> bool:
+    pending = runner.drain_authorization_requests()
+    if not pending:
+        return False
+    for request in pending:
+        selection = choose_authorization_interactively(
+            request.tool_name,
+            request.reason,
+            argument_summary=request.argument_summary,
+            mode_label=execution_mode_spec(request.execution_mode).title,
+        )
+        if selection == "workspace":
+            request.response = {"status": "approved", "scope": "workspace", "reason": "Allowed in this workspace."}
+        elif selection == "once":
+            request.response = {"status": "approved", "scope": "once", "reason": "Allowed once."}
+        else:
+            request.response = {"status": "denied", "scope": "deny", "reason": "Not allowed."}
+        request.completed.set()
+    return True
+
+
 def run_repl(runtime, session, resumed: bool = False) -> int:
     runner = TurnQueueRunner(runtime, session, stable_prompt=False)
+    runtime.authorization_request_handler = runner.request_authorization
     prompt_session = None
     try:
         prompt_session = create_prompt_session(
@@ -422,112 +495,125 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
     runner.stable_prompt = prompt_session is not None and patch_stdout is not None
     if prompt_session is not None:
         runner.set_ui_invalidator(lambda: prompt_session.app.invalidate() if prompt_session.app else None)
+        runner.set_prompt_interrupter(
+            lambda: prompt_session.app.exit(result=AUTHORIZATION_PROMPT_SENTINEL) if prompt_session.app else None
+        )
     runner.start()
     print(f"[session {session.id}]")
     if resumed:
         _print_resumed_history(session)
     prompt_context = patch_stdout(raw=True) if prompt_session is not None and patch_stdout is not None else nullcontext()
-    with prompt_context:
-        while True:
-            try:
-                if prompt_session is not None:
-                    query = prompt_session.prompt(
-                        runner.prompt_message,
-                        refresh_interval=0.1,
-                        bottom_toolbar=runner.bottom_toolbar,
-                    )
-                else:
-                    if sys.stdout.isatty():
-                        query = input(
-                            f"{fallback_prompt_message()}\n"
-                            f"{runner.execution_mode_ansi_label()}\n"
-                            f"{runner.current_model_label()}\n"
+    try:
+        with prompt_context:
+            while True:
+                if _resolve_authorization_requests(runner):
+                    continue
+                try:
+                    if prompt_session is not None:
+                        query = prompt_session.prompt(
+                            runner.prompt_message,
+                            refresh_interval=0.1,
+                            bottom_toolbar=runner.bottom_toolbar,
                         )
                     else:
-                        query = input(f"{PROMPT_TEXT}\n{runner.execution_mode_label()}\n{runner.current_model_label()}\n")
-            except (EOFError, KeyboardInterrupt):
-                print()
-                active, queued = runner.stats()
-                if active:
-                    if runner.request_interrupt():
-                        print("[interrupt requested]")
-                    continue
-                if queued:
-                    print(f"[waiting for {queued} queued item(s) before exit]")
+                        if sys.stdout.isatty():
+                            query = input(
+                                f"{runner.execution_mode_ansi_label()}\n"
+                                f"{runner.current_model_label()}\n"
+                                f"{fallback_prompt_message()}"
+                            )
+                        else:
+                            query = input(
+                                f"{runner.execution_mode_label()}\n{runner.current_model_label()}\n{PROMPT_TEXT}"
+                            )
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    active, queued = runner.stats()
+                    if active:
+                        if runner.request_interrupt():
+                            print("[interrupt requested]")
+                        continue
+                    if queued:
+                        print(f"[waiting for {queued} queued item(s) before exit]")
+                        runner.close(drain=True)
+                        break
                     runner.close(drain=True)
                     break
-                runner.close(drain=True)
-                break
-            stripped = query.strip()
-            if not stripped or stripped in {"q", "exit", "/exit"}:
-                active, queued = runner.stats()
-                if queued:
-                    dropped = runner.close(drain=False)
-                    if active:
-                        print(f"[exiting after current response; dropped {dropped} queued prompt(s)]")
-                    elif dropped:
-                        print(f"[dropped {dropped} queued prompt(s)]")
-                else:
-                    if active:
-                        print("[waiting for current response before exit]")
-                    runner.close(drain=True)
-                break
-            if stripped == "/compact":
-                if runner.has_inflight_work():
-                    print("[busy; wait for queued responses before /compact]")
+                if query == AUTHORIZATION_PROMPT_SENTINEL:
+                    _resolve_authorization_requests(runner)
                     continue
-                runtime.compact_session(session)
-                print("[manual compact complete]")
-                continue
-            if stripped == "/undo":
-                if runner.has_inflight_work():
-                    print("[busy; wait for queued responses before /undo]")
+                stripped = query.strip()
+                if not stripped or stripped in {"q", "exit", "/exit"}:
+                    active, queued = runner.stats()
+                    if queued:
+                        dropped = runner.close(drain=False)
+                        if active:
+                            print(f"[exiting after current response; dropped {dropped} queued prompt(s)]")
+                        elif dropped:
+                            print(f"[dropped {dropped} queued prompt(s)]")
+                    else:
+                        if active:
+                            print("[waiting for current response before exit]")
+                        runner.close(drain=True)
+                    break
+                if stripped == "/compact":
+                    if runner.has_inflight_work():
+                        print("[busy; wait for queued responses before /compact]")
+                        continue
+                    runtime.compact_session(session)
+                    print("[manual compact complete]")
                     continue
-                _handle_undo_command(runtime, session)
-                continue
-            if stripped == "/model":
-                if runner.has_inflight_work():
-                    print("[busy; wait for queued responses before /model]")
+                if stripped == "/undo":
+                    if runner.has_inflight_work():
+                        print("[busy; wait for queued responses before /undo]")
+                        continue
+                    _handle_undo_command(runtime, session)
                     continue
-                _handle_model_command(runtime)
-                continue
-            if stripped == "/tasks":
-                tasks = runtime.task_store.list_all()
-                if not tasks:
-                    print("No tasks.")
-                else:
-                    for task in tasks:
-                        print(json.dumps(task, ensure_ascii=False, indent=2))
-                continue
-            if stripped == "/team":
-                print(runtime.team_manager.list_all())
-                continue
-            if stripped == "/inbox":
-                print(json.dumps(runtime.bus.read_inbox("lead"), indent=2, ensure_ascii=False))
-                continue
-            if stripped == "/mcp":
-                print(runtime.mcp_status())
-                continue
-            if stripped == "/toollog":
-                print(runtime.recent_tool_logs())
-                continue
-            if stripped.startswith("/toollog "):
-                log_id = stripped.split(maxsplit=1)[1].strip()
-                print(runtime.render_tool_log(log_id))
-                continue
-            if stripped == "/bg":
-                print(runtime.background_manager.check())
-                continue
-            if stripped == "/help":
-                print("\n".join(f"{command} - {description}" for command, description in COMMAND_SPECS))
-                continue
-            if stripped.startswith("/") and not _is_read_only_command(stripped):
-                print(f"[unknown command] {stripped}")
-                continue
-            was_active, queued_before = runner.enqueue(query)
-            if runner.stable_prompt and not was_active and queued_before == 0:
-                print(f"{PROMPT_TEXT}{query}")
-            if (was_active or queued_before) and not runner.stable_prompt:
-                ahead = queued_before + (1 if was_active else 0)
-                print(f"[queued; {ahead} item(s) ahead]")
+                if stripped == "/model":
+                    if runner.has_inflight_work():
+                        print("[busy; wait for queued responses before /model]")
+                        continue
+                    _handle_model_command(runtime)
+                    continue
+                if stripped == "/tasks":
+                    tasks = runtime.task_store.list_all()
+                    if not tasks:
+                        print("No tasks.")
+                    else:
+                        for task in tasks:
+                            print(json.dumps(task, ensure_ascii=False, indent=2))
+                    continue
+                if stripped == "/team":
+                    print(runtime.team_manager.list_all())
+                    continue
+                if stripped == "/inbox":
+                    print(json.dumps(runtime.bus.read_inbox("lead"), indent=2, ensure_ascii=False))
+                    continue
+                if stripped == "/mcp":
+                    print(runtime.mcp_status())
+                    continue
+                if stripped == "/toollog":
+                    print(runtime.recent_tool_logs())
+                    continue
+                if stripped.startswith("/toollog "):
+                    log_id = stripped.split(maxsplit=1)[1].strip()
+                    print(runtime.render_tool_log(log_id))
+                    continue
+                if stripped == "/bg":
+                    print(runtime.background_manager.check())
+                    continue
+                if stripped == "/help":
+                    print("\n".join(f"{command} - {description}" for command, description in COMMAND_SPECS))
+                    continue
+                if stripped.startswith("/") and not _is_read_only_command(stripped):
+                    print(f"[unknown command] {stripped}")
+                    continue
+                was_active, queued_before = runner.enqueue(query)
+                if runner.stable_prompt and not was_active and queued_before == 0:
+                    print(f"{PROMPT_TEXT}{query}")
+                if (was_active or queued_before) and not runner.stable_prompt:
+                    ahead = queued_before + (1 if was_active else 0)
+                    print(f"[queued; {ahead} item(s) ahead]")
+    finally:
+        runtime.authorization_request_handler = None
     return 0
