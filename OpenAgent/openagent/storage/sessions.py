@@ -27,6 +27,8 @@ class SessionStore:
             "todo_items": [],
             "rounds_without_todo": 0,
             "latest_turn_id": None,
+            "last_turn_file_changes": [],
+            "undo_stack": [],
         }
         self.save(payload)
         index = read_json(self.index_path, {"latest": None, "items": []})

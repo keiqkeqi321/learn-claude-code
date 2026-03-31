@@ -26,6 +26,43 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertEqual(log_id, "todo-log")
         self.assertEqual(fake_stdout.getvalue(), "")
 
+    def test_file_edit_tool_event_uses_compact_diffstat_output(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.tool_log_store = SimpleNamespace(write=lambda **kwargs: {"id": "edit-log"})
+        runtime._supports_ansi_output = lambda: False
+
+        class _Stdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdout = _Stdout()
+        with patch("sys.stdout", fake_stdout):
+            log_id = OpenAgentRuntime.print_tool_event(
+                runtime,
+                "lead",
+                "edit_file",
+                {"path": "openagent/config/settings.py"},
+                {
+                    "status": "ok",
+                    "path": "openagent/config/settings.py",
+                    "absolute_path": "D:/workspace/openagent/config/settings.py",
+                    "added_lines": 67,
+                    "removed_lines": 0,
+                },
+            )
+
+        rendered = fake_stdout.getvalue()
+        self.assertEqual(log_id, "edit-log")
+        self.assertIn("edit_file", rendered)
+        self.assertIn("View by: /toollog edit-log", rendered)
+        self.assertIn("openagent/config/settings.py +67 -0", rendered)
+        self.assertLess(rendered.index("edit_file"), rendered.index("View by: /toollog edit-log"))
+        self.assertLess(
+            rendered.index("View by: /toollog edit-log"),
+            rendered.index("openagent/config/settings.py +67 -0"),
+        )
+        self.assertNotIn("TOOL lead", rendered)
+
     def test_build_system_prompt_includes_environment_guidance(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.settings = SimpleNamespace(

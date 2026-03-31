@@ -16,6 +16,9 @@ class AgentSession:
     todo_items: list[dict[str, Any]] = field(default_factory=list)
     rounds_without_todo: int = 0
     latest_turn_id: str | None = None
+    last_turn_file_changes: list[dict[str, Any]] = field(default_factory=list)
+    undo_stack: list[dict[str, Any]] = field(default_factory=list)
+    pending_file_changes: list[dict[str, Any]] = field(default_factory=list, repr=False)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "AgentSession":
@@ -27,6 +30,8 @@ class AgentSession:
             todo_items=list(payload.get("todo_items", [])),
             rounds_without_todo=int(payload.get("rounds_without_todo", 0)),
             latest_turn_id=payload.get("latest_turn_id"),
+            last_turn_file_changes=list(payload.get("last_turn_file_changes", [])),
+            undo_stack=list(payload.get("undo_stack", [])),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -38,6 +43,8 @@ class AgentSession:
             "todo_items": self.todo_items,
             "rounds_without_todo": self.rounds_without_todo,
             "latest_turn_id": self.latest_turn_id,
+            "last_turn_file_changes": self.last_turn_file_changes,
+            "undo_stack": self.undo_stack,
         }
 
 

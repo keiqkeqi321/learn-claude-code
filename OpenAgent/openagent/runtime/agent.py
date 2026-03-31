@@ -14,6 +14,7 @@ import json
 import platform
 import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 from openagent.collaboration.bus import MessageBus
@@ -137,6 +138,9 @@ class OpenAgentRuntime:
             return log_entry["id"]
         if not sys.stdout.isatty():
             return log_entry["id"]
+        if self._is_file_change_event(tool_name, output):
+            self._print_file_change_event(tool_name, log_entry["id"], output)
+            return log_entry["id"]
         border = f"{'=' * 18} {category} {actor} {'=' * 18}"
         name_line = f"Name: {tool_name}"
         args_text = self._stringify_tool_value(tool_input)
@@ -163,6 +167,35 @@ class OpenAgentRuntime:
             print(f"{color}{text}\x1b[0m")
             return
         print(text)
+
+    def _is_file_change_event(self, tool_name: str, output: Any) -> bool:
+        return tool_name in {"write_file", "edit_file"} and isinstance(output, dict) and "path" in output
+
+    def _print_file_change_event(self, tool_name: str, log_id: str, output: dict[str, Any]) -> None:
+        path = str(output.get("path", "(unknown path)"))
+        absolute_path = str(output.get("absolute_path", "")).strip()
+        added = int(output.get("added_lines", 0))
+        removed = int(output.get("removed_lines", 0))
+        plus_text = f"+{added}"
+        minus_text = f"-{removed}"
+        path_text = self._format_clickable_file_label(path, absolute_path)
+        print()
+        if self._supports_ansi_output():
+            plus_text = f"\x1b[32m{plus_text}\x1b[0m"
+            minus_text = f"\x1b[31m{minus_text}\x1b[0m"
+        print(tool_name)
+        print(f"View by: /toollog {log_id}")
+        print(f"{path_text} {plus_text} {minus_text}")
+        print()
+
+    def _format_clickable_file_label(self, label: str, absolute_path: str) -> str:
+        if not absolute_path or not self._supports_ansi_output():
+            return label
+        try:
+            file_uri = Path(absolute_path).resolve().as_uri()
+        except Exception:
+            return label
+        return f"\x1b]8;;{file_uri}\x1b\\{label}\x1b]8;;\x1b\\"
 
     def _stdout_is_prompt_toolkit_proxy(self) -> bool:
         stdout_type = type(sys.stdout)

@@ -7,7 +7,7 @@ name = "OpenAgent"
 # """
 
 [providers]
-default = "anthropic"
+default = "openai"
 
 [providers.anthropic]
 models = ["glm-5", "kimi-k2.5", "qwen3.5-plus"]
@@ -17,7 +17,7 @@ base_url = "https://coding.dashscope.aliyuncs.com/apps/anthropic"
 
 [providers.openai]
 models = ["glm-5", "kimi-k2.5", "qwen3.5-plus"]
-default_model = "qwen3.5-plus"
+default_model = "kimi-k2.5"
 api_key = "sk-sp-54e807dab13a42f88021d34da7107e86"
 base_url = "https://coding.dashscope.aliyuncs.com/v1"
 
