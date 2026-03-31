@@ -18,6 +18,7 @@ from prompt_toolkit.key_binding.defaults import load_key_bindings
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Button, Dialog, Label, RadioList
 
 COMMAND_SPECS = [
@@ -50,6 +51,29 @@ PROMPT_FORMATTED = FormattedText(
         ("#808080", ">>"),
         ("", " "),
     ]
+)
+
+SESSION_PICKER_STYLE = Style.from_dict(
+    {
+        "dialog": "bg:#0b1220",
+        "dialog.body": "bg:#111827 fg:#d1d5db",
+        "frame.border": "fg:#334155 bg:#111827",
+        "frame.label": "fg:#67e8f9 bg:#111827 bold",
+        "button": "bg:#1f2937 fg:#cbd5e1",
+        "button.arrow": "bg:#1f2937 fg:#64748b",
+        "button.focused": "bg:#0f766e fg:#ecfeff bold",
+        "button.focused.arrow": "bg:#0f766e fg:#99f6e4 bold",
+        "button.text": "",
+        "radio-list": "bg:#0f172a fg:#cbd5e1",
+        "radio": "bg:#0f172a fg:#94a3b8",
+        "radio-selected": "bg:#1e293b fg:#e2e8f0",
+        "radio-checked": "fg:#5eead4 bold",
+        "radio-number": "fg:#64748b",
+        "label": "fg:#cbd5e1",
+        "session-picker.help": "fg:#7dd3fc bg:#111827",
+        "session-picker.subtitle": "fg:#94a3b8 bg:#111827",
+        "shadow": "bg:#020617",
+    }
 )
 
 
@@ -226,7 +250,21 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
         return None
 
     try:
-        radio_list = RadioList(values=items, default=items[0][0], select_on_focus=True, show_scrollbar=True)
+        radio_list = RadioList(
+            values=items,
+            default=items[0][0],
+            select_on_focus=True,
+            show_scrollbar=True,
+            show_numbers=True,
+            open_character="[",
+            close_character="]",
+            select_character="x",
+            container_style="class:radio-list",
+            default_style="class:radio",
+            selected_style="class:radio-selected",
+            checked_style="class:radio-checked",
+            number_style="class:radio-number",
+        )
 
         def ok_handler() -> None:
             get_app().exit(result=radio_list.current_value)
@@ -238,10 +276,15 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
             title="Resume Session",
             body=HSplit(
                 [
-                    Label(text="Choose a previous session to resume.", dont_extend_height=True),
+                    Label(
+                        text="Choose a previous session to resume.",
+                        style="class:session-picker.subtitle",
+                        dont_extend_height=True,
+                    ),
                     radio_list,
                     Label(
                         text="Move: Up/Down or j/k | Scroll: PgUp/PgDn | Switch focus: Tab | Buttons: OK (Enter), Cancel (Esc)",
+                        style="class:session-picker.help",
                         dont_extend_height=True,
                     ),
                 ],
@@ -271,6 +314,7 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
             key_bindings=merge_key_bindings([load_key_bindings(), bindings]),
             mouse_support=True,
             full_screen=True,
+            style=SESSION_PICKER_STYLE,
         )
         return app.run()
     except Exception:

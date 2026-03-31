@@ -56,6 +56,26 @@ class SessionChoice:
     label: str
 
 
+def _has_visible_exchange(session) -> bool:
+    has_user = False
+    has_assistant = False
+    for message in session.messages:
+        role = message.get("role")
+        content = message.get("content")
+        if role == "user" and isinstance(content, str):
+            if content.startswith("<background-results>") or content.startswith("<inbox>"):
+                continue
+            if content.strip():
+                has_user = True
+        elif role == "assistant":
+            text = render_text_content(content).strip()
+            if text:
+                has_assistant = True
+        if has_user and has_assistant:
+            return True
+    return False
+
+
 def _session_preview(session) -> str:
     for message in reversed(session.messages):
         role = message.get("role")
@@ -76,6 +96,8 @@ def _session_preview(session) -> str:
 def _build_session_choices(runtime: OpenAgentRuntime) -> list[SessionChoice]:
     choices: list[SessionChoice] = []
     for session in runtime.list_sessions():
+        if not _has_visible_exchange(session):
+            continue
         stamp = format_session_timestamp(session.updated_at or session.created_at)
         preview = _session_preview(session)
         label = f"{session.id} | {stamp} | {preview}"
