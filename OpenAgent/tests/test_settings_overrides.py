@@ -5,7 +5,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from openagent.config.settings import load_settings
+from openagent.config.settings import load_settings, persist_provider_selection
 
 
 class SettingsOverrideTests(unittest.TestCase):
@@ -72,6 +72,37 @@ class SettingsOverrideTests(unittest.TestCase):
         self.assertEqual(settings.provider.name, "anthropic")
         self.assertEqual(settings.provider.model, "claude-sonnet-4-5")
         self.assertEqual(settings.provider_profiles["anthropic"].models, ["claude-sonnet-4-5"])
+
+    def test_persist_provider_selection_updates_openagent_toml_and_roundtrips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "openagent.toml"
+            config_path.write_text(
+                textwrap.dedent(
+                    """
+                    [providers]
+                    default = "anthropic"
+
+                    [providers.anthropic]
+                    models = ["glm-5", "kimi-k2.5"]
+                    default_model = "glm-5"
+
+                    [providers.openai]
+                    models = ["gpt-4.1", "kimi-k2.5"]
+                    default_model = "gpt-4.1"
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            settings = load_settings(root)
+
+            persist_provider_selection(settings, "openai", "kimi-k2.5")
+            reloaded = load_settings(root)
+
+        self.assertEqual(reloaded.provider.name, "openai")
+        self.assertEqual(reloaded.provider.model, "kimi-k2.5")
+        self.assertEqual(reloaded.provider_profiles["openai"].default_model, "kimi-k2.5")
 
 
 if __name__ == "__main__":

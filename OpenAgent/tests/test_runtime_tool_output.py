@@ -48,6 +48,8 @@ class RuntimeToolOutputTests(unittest.TestCase):
     def test_switch_provider_model_updates_runtime_and_compact_manager(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.settings = SimpleNamespace(
+            workspace_root=Path("D:/workspace"),
+            raw_config={"providers": {}},
             provider=ProviderSettings(name="anthropic", model="glm-5", max_tokens=8000),
             provider_profiles={
                 "openai": ProviderProfileSettings(
@@ -68,14 +70,18 @@ class RuntimeToolOutputTests(unittest.TestCase):
             "model": provider_settings.model,
         }
 
-        message = OpenAgentRuntime.switch_provider_model(runtime, "openai", "gpt-4.1-mini")
+        with patch("openagent.runtime.agent.persist_provider_selection") as mock_persist:
+            message = OpenAgentRuntime.switch_provider_model(runtime, "openai", "gpt-4.1-mini")
 
         self.assertIn("gpt-4.1-mini", message)
+        self.assertIn("saved it to openagent.toml", message)
         self.assertEqual(runtime.settings.provider.name, "openai")
         self.assertEqual(runtime.settings.provider.model, "gpt-4.1-mini")
         self.assertEqual(runtime.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
         self.assertEqual(runtime.compact_manager.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
         self.assertEqual(runtime.compact_manager.model_max_tokens, 4096)
+        self.assertEqual(runtime.settings.provider_profiles["openai"].default_model, "gpt-4.1-mini")
+        mock_persist.assert_called_once_with(runtime.settings, "openai", "gpt-4.1-mini")
 
 
 if __name__ == "__main__":

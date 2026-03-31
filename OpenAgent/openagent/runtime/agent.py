@@ -19,6 +19,7 @@ from typing import Any
 from openagent.collaboration.bus import MessageBus
 from openagent.collaboration.protocols import RequestTracker
 from openagent.config.models import AppSettings, ProviderProfileSettings, ProviderSettings
+from openagent.config.settings import persist_provider_selection
 from openagent.mcp.registry import MCPRegistry
 from openagent.providers.anthropic_provider import AnthropicProvider
 from openagent.providers.base import LLMProvider
@@ -269,10 +270,15 @@ class OpenAgentRuntime:
             max_tokens=profile.max_tokens,
             timeout_seconds=profile.timeout_seconds,
         )
+        self.settings.provider_profiles[normalized_provider].default_model = normalized_model
         self.provider = self._instantiate_provider(self.settings.provider)
         self.compact_manager.provider = self.provider
         self.compact_manager.model_max_tokens = self.settings.provider.max_tokens
-        return f"Switched to provider '{self.settings.provider.name}' with model '{self.settings.provider.model}'."
+        persist_provider_selection(self.settings, normalized_provider, normalized_model)
+        return (
+            f"Switched to provider '{self.settings.provider.name}' with model "
+            f"'{self.settings.provider.model}' and saved it to openagent.toml."
+        )
 
     def _register_core_tools(self, registry: ToolRegistry) -> None:
         register_shell_tool(registry)

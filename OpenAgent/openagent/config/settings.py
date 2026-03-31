@@ -20,6 +20,73 @@ def _read_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _section_header(name: str) -> str:
+    return f"[{name}]"
+
+
+def _find_section_bounds(lines: list[str], section_name: str) -> tuple[int | None, int | None]:
+    header = _section_header(section_name)
+    start: int | None = None
+    end: int | None = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == header:
+            start = index
+            continue
+        if start is not None and stripped.startswith("[") and stripped.endswith("]"):
+            end = index
+            break
+    if start is not None and end is None:
+        end = len(lines)
+    return start, end
+
+
+def _upsert_section_value(lines: list[str], section_name: str, key: str, value: str) -> None:
+    start, end = _find_section_bounds(lines, section_name)
+    assignment = f"{key} = {value}"
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(_section_header(section_name))
+        lines.append(assignment)
+        return
+
+    assert end is not None
+    for index in range(start + 1, end):
+        stripped = lines[index].strip()
+        if stripped.startswith(f"{key} ="):
+            lines[index] = assignment
+            return
+    insert_at = start + 1
+    while insert_at < end and not lines[insert_at].strip():
+        insert_at += 1
+    lines.insert(insert_at, assignment)
+
+
+def persist_provider_selection(settings: AppSettings, provider_name: str, model: str) -> None:
+    config_path = settings.workspace_root / "openagent.toml"
+    lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.exists() else []
+    _upsert_section_value(lines, "providers", "default", _toml_string(provider_name))
+    _upsert_section_value(lines, f"providers.{provider_name}", "default_model", _toml_string(model))
+    config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    providers_raw = settings.raw_config.setdefault("providers", {})
+    if not isinstance(providers_raw, dict):
+        providers_raw = {}
+        settings.raw_config["providers"] = providers_raw
+    providers_raw["default"] = provider_name
+    provider_raw = providers_raw.setdefault(provider_name, {})
+    if not isinstance(provider_raw, dict):
+        provider_raw = {}
+        providers_raw[provider_name] = provider_raw
+    provider_raw["default_model"] = model
+
+
 def _resolve_optional_path(root: Path, value: str | None) -> Path | None:
     if not value:
         return None
