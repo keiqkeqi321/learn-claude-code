@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from openagent.storage.common import now_ts
+from openagent.tools.process import run_command
 from openagent.tools.registry import ToolDefinition
 
 
@@ -36,15 +37,13 @@ class BackgroundManager:
 
     def _execute(self, job_id: str, command: str, timeout: int) -> None:
         try:
-            completed = subprocess.run(
+            completed = run_command(
                 command,
                 shell=True,
                 cwd=self.workspace_root,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
             )
-            result = (completed.stdout + completed.stderr).strip() or "(no output)"
+            result = completed.combined_output().strip() or "(no output)"
             job = self.job_store.update(job_id, status="completed", result=result[: self.max_output_chars])
         except Exception as exc:
             job = self.job_store.update(job_id, status="error", result=str(exc))

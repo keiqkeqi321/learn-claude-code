@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from typing import Any
 
+from openagent.tools.process import run_command
 from openagent.tools.registry import ToolDefinition
 
 DANGEROUS_SNIPPETS = [
@@ -21,17 +22,15 @@ def run_shell(ctx: Any, payload: dict[str, Any]) -> str:
     if any(snippet in lowered for snippet in DANGEROUS_SNIPPETS):
         return "Error: Dangerous command blocked"
     try:
-        completed = subprocess.run(
+        completed = run_command(
             command,
             shell=True,
             cwd=ctx.runtime.settings.workspace_root,
-            capture_output=True,
-            text=True,
             timeout=int(payload.get("timeout", ctx.runtime.settings.runtime.command_timeout_seconds)),
         )
     except subprocess.TimeoutExpired:
         return f"Error: Timeout ({ctx.runtime.settings.runtime.command_timeout_seconds}s)"
-    output = (completed.stdout + completed.stderr).strip() or "(no output)"
+    output = completed.combined_output().strip() or "(no output)"
     return output[: ctx.runtime.settings.runtime.max_tool_output_chars]
 
 
