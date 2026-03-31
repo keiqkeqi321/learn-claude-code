@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from openagent.runtime.agent import OpenAgentRuntime
+from openagent.runtime.messages import render_text_content
+from openagent.cli.prompting import choose_session_interactively, format_session_timestamp
 
 
 class ConsoleStreamer:
@@ -47,11 +50,57 @@ class ConsoleStreamer:
             print()
 
 
+@dataclass(slots=True)
+class SessionChoice:
+    session_id: str
+    label: str
+
+
+def _session_preview(session) -> str:
+    for message in reversed(session.messages):
+        role = message.get("role")
+        content = message.get("content")
+        if role == "assistant":
+            text = render_text_content(content).strip()
+        elif role == "user" and isinstance(content, str):
+            if content.startswith("<background-results>") or content.startswith("<inbox>"):
+                continue
+            text = content.strip()
+        else:
+            continue
+        if text:
+            return " ".join(text.split())[:80]
+    return "[no visible messages]"
+
+
+def _build_session_choices(runtime: OpenAgentRuntime) -> list[SessionChoice]:
+    choices: list[SessionChoice] = []
+    for session in runtime.list_sessions():
+        stamp = format_session_timestamp(session.updated_at or session.created_at)
+        preview = _session_preview(session)
+        label = f"{session.id} | {stamp} | {preview}"
+        choices.append(SessionChoice(session_id=session.id, label=label))
+    return choices
+
+
+def _select_session(runtime: OpenAgentRuntime):
+    choices = _build_session_choices(runtime)
+    if not choices:
+        print("No saved sessions. Starting a new chat.")
+        return runtime.create_session(), False
+
+    selected_id = choose_session_interactively([(item.session_id, item.label) for item in choices])
+    if not selected_id:
+        print("Session selection cancelled. Starting a new chat.")
+        return runtime.create_session(), False
+    return runtime.load_session(selected_id), True
+
+
 def cmd_chat(runtime: OpenAgentRuntime, resume: bool = False) -> int:
     from openagent.cli.repl import run_repl
 
-    session = runtime.latest_session() if resume else runtime.create_session()
-    return run_repl(runtime, session, resumed=resume)
+    session, resumed = _select_session(runtime) if resume else (runtime.create_session(), False)
+    return run_repl(runtime, session, resumed=resumed)
 
 
 def cmd_run(runtime: OpenAgentRuntime, prompt: str) -> int:

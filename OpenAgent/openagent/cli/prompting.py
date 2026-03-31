@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
 import time
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completion, Completer
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
+from prompt_toolkit.key_binding.defaults import load_key_bindings
+from prompt_toolkit.layout import Layout
+from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.shortcuts import CompleteStyle
+from prompt_toolkit.widgets import Button, Dialog, Label, RadioList
 
 COMMAND_SPECS = [
     ("/compact", "Compact the current session context"),
@@ -212,3 +219,80 @@ def styled_prompt_message():
 
 def fallback_prompt_message() -> str:
     return PROMPT_ANSI
+
+
+def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
+    if not items:
+        return None
+
+    try:
+        radio_list = RadioList(values=items, default=items[0][0], select_on_focus=True, show_scrollbar=True)
+
+        def ok_handler() -> None:
+            get_app().exit(result=radio_list.current_value)
+
+        def cancel_handler() -> None:
+            get_app().exit(result=None)
+
+        dialog = Dialog(
+            title="Resume Session",
+            body=HSplit(
+                [
+                    Label(text="Choose a previous session to resume.", dont_extend_height=True),
+                    radio_list,
+                    Label(
+                        text="Move: Up/Down or j/k | Scroll: PgUp/PgDn | Switch focus: Tab | Buttons: OK (Enter), Cancel (Esc)",
+                        dont_extend_height=True,
+                    ),
+                ],
+                padding=1,
+            ),
+            buttons=[
+                Button(text="OK (Enter)", handler=ok_handler, width=16),
+                Button(text="Cancel (Esc)", handler=cancel_handler, width=18),
+            ],
+            with_background=True,
+        )
+
+        bindings = KeyBindings()
+        bindings.add("tab")(focus_next)
+        bindings.add("s-tab")(focus_previous)
+
+        @bindings.add("enter", eager=True)
+        def _confirm(event) -> None:
+            ok_handler()
+
+        @bindings.add("escape", eager=True)
+        def _cancel(event) -> None:
+            cancel_handler()
+
+        app: Application[str | None] = Application(
+            layout=Layout(dialog),
+            key_bindings=merge_key_bindings([load_key_bindings(), bindings]),
+            mouse_support=True,
+            full_screen=True,
+        )
+        return app.run()
+    except Exception:
+        print("Choose a session to resume:")
+        print("Move: enter the number shown below. Leave blank to cancel.")
+        for index, (_, label) in enumerate(items, start=1):
+            print(f"{index}. {label}")
+        while True:
+            choice = input("Selection (blank to cancel): ").strip()
+            if not choice:
+                return None
+            if choice.isdigit():
+                selected = int(choice)
+                if 1 <= selected <= len(items):
+                    return items[selected - 1][0]
+            print("Invalid selection.")
+
+
+def format_session_timestamp(timestamp: float | None) -> str:
+    if not timestamp:
+        return "unknown time"
+    try:
+        return datetime.fromtimestamp(timestamp).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (OSError, OverflowError, ValueError):
+        return "unknown time"

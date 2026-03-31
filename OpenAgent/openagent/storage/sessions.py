@@ -59,3 +59,14 @@ class SessionStore:
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def list_all(self) -> list[dict[str, Any]]:
+        index = read_json(self.index_path, {"latest": None, "items": []})
+        sessions: list[dict[str, Any]] = []
+        for session_id in index.get("items", []):
+            path = self._path(session_id)
+            if not path.exists():
+                continue
+            sessions.append(json.loads(path.read_text(encoding="utf-8")))
+        sessions.sort(key=lambda item: (float(item.get("updated_at") or 0), float(item.get("created_at") or 0)), reverse=True)
+        return sessions

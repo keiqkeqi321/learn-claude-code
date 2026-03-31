@@ -355,6 +355,12 @@ class OpenAgentRuntime:
     def latest_session(self) -> AgentSession:
         return self.session_manager.latest_or_create()
 
+    def load_session(self, session_id: str) -> AgentSession:
+        return self.session_manager.load(session_id)
+
+    def list_sessions(self) -> list[AgentSession]:
+        return self.session_manager.list_all()
+
     def complete(
         self,
         system_prompt: str,

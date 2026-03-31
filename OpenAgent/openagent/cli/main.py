@@ -9,13 +9,24 @@ from openagent.runtime.agent import OpenAgentRuntime
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openagent")
     parser.add_argument("--workspace", default=".", help="Workspace root for the agent.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument(
+        "-r",
+        "-resume",
+        "--resume",
+        dest="resume",
+        action="store_true",
+        help="Open the interactive session picker and resume a saved chat.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
 
     chat_parser = subparsers.add_parser("chat", help="Start interactive chat mode.")
     chat_parser.add_argument(
+        "-r",
+        "-resume",
         "--resume",
+        dest="resume",
         action="store_true",
-        help="Resume the latest persisted chat session instead of starting a new one.",
+        help="Open the interactive session picker and resume a saved chat.",
     )
 
     run_parser = subparsers.add_parser("run", help="Run a single prompt.")
@@ -47,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
             cmd_tasks_list,
         )
 
-        if args.command == "chat":
+        if args.command in {None, "chat"}:
             return cmd_chat(runtime, resume=getattr(args, "resume", False))
         if args.command == "run":
             return cmd_run(runtime, args.prompt)

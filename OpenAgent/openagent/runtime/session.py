@@ -61,6 +61,14 @@ class SessionManager:
             payload["messages"] = self.transcript_store.load_snapshot(session_id)
         return AgentSession.from_payload(payload)
 
+    def list_all(self) -> list[AgentSession]:
+        sessions: list[AgentSession] = []
+        for payload in self.session_store.list_all():
+            if not payload.get("messages"):
+                payload["messages"] = self.transcript_store.load_snapshot(payload["id"])
+            sessions.append(AgentSession.from_payload(payload))
+        return sessions
+
     def save(self, session: AgentSession) -> None:
         self.session_store.save(session.to_payload())
         self.transcript_store.save_snapshot(session.id, session.messages)
