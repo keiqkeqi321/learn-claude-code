@@ -370,6 +370,8 @@ class OpenAgentRuntime:
             f"- OS: {os_name}\n"
             f"- Shell: {shell_line}\n"
             f"- Workspace: {self.settings.workspace_root}\n"
+            f"- Active provider: {self.settings.provider.name}\n"
+            f"- Active model: {self.settings.provider.model}\n"
             "Tool behavior:\n"
             f"- {bash_hint}"
         )
@@ -377,6 +379,13 @@ class OpenAgentRuntime:
     def build_system_prompt(self, actor: str = "lead", role: str = "lead coding agent") -> str:
         base_prompt = self._base_system_prompt()
         environment_guidance = self._environment_guidance()
+        identity_guidance = (
+            "Identity rules:\n"
+            f"- Your configured runtime provider is '{self.settings.provider.name}'.\n"
+            f"- Your configured runtime model is '{self.settings.provider.model}'.\n"
+            "- If the user asks which model or provider you are using, answer with these configured values.\n"
+            "- Do not claim to be Claude, ChatGPT, GPT, Gemini, or any other model/vendor unless that exactly matches the configured runtime values above."
+        )
         if actor == "lead":
             return (
                 f"{base_prompt}\n\n"
@@ -384,6 +393,7 @@ class OpenAgentRuntime:
                 "Use tools to solve coding tasks. Prefer task_create/task_update/task_list for longer work.\n"
                 "Use TodoWrite for short checklists. Use task for isolated subagent work. Use load_skill only when needed.\n"
                 "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
+                f"{identity_guidance}\n"
                 f"{environment_guidance}\n"
                 f"Available skills:\n{self.skill_loader.descriptions()}"
             )
@@ -393,6 +403,7 @@ class OpenAgentRuntime:
             "You are a persistent teammate following the s11 work/idle loop.\n"
             "Use tools to complete current work, send messages when needed, and call idle when you have finished the current unit of work.\n"
             "While idle you may be resumed by inbox messages or unclaimed tasks.\n"
+            f"{identity_guidance}\n"
             f"{environment_guidance}\n"
             f"Available skills:\n{self.skill_loader.descriptions()}"
         )

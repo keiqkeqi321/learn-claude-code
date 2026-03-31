@@ -31,6 +31,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
         runtime.settings = SimpleNamespace(
             workspace_root=Path("D:/workspace"),
             agent=SimpleNamespace(system_prompt=None, name="OpenAgent"),
+            provider=SimpleNamespace(name="openai", model="kimi-k2.5"),
         )
         runtime.skill_loader = SimpleNamespace(descriptions=lambda: "none")
 
@@ -40,6 +41,9 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("Tool behavior:", prompt)
         self.assertIn("Workspace:", prompt)
         self.assertIn("bash", prompt)
+        self.assertIn("Active provider: openai", prompt)
+        self.assertIn("Active model: kimi-k2.5", prompt)
+        self.assertIn("Do not claim to be Claude", prompt)
 
     def test_switch_provider_model_updates_runtime_and_compact_manager(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
