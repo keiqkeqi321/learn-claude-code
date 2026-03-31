@@ -18,6 +18,28 @@ class CliResumeTests(unittest.TestCase):
         self.assertTrue(build_parser().parse_args(["-r"]).resume)
         self.assertTrue(build_parser().parse_args(["-resume"]).resume)
 
+    def test_parser_supports_provider_and_model_overrides(self) -> None:
+        args = build_parser().parse_args(["--provider", "openai", "--model", "gpt-5", "run", "hello"])
+
+        self.assertEqual(args.provider, "openai")
+        self.assertEqual(args.model, "gpt-5")
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.prompt, "hello")
+
+    def test_parser_supports_provider_and_model_after_subcommand(self) -> None:
+        args = build_parser().parse_args(["chat", "--provider", "anthropic", "--model", "glm-5"])
+
+        self.assertEqual(args.provider, "anthropic")
+        self.assertEqual(args.model, "glm-5")
+        self.assertEqual(args.command, "chat")
+
+    def test_parser_supports_provider_and_model_for_doctor_subcommand(self) -> None:
+        args = build_parser().parse_args(["doctor", "--provider", "openai", "--model", "gpt-4.1"])
+
+        self.assertEqual(args.provider, "openai")
+        self.assertEqual(args.model, "gpt-4.1")
+        self.assertEqual(args.command, "doctor")
+
     def test_cmd_chat_starts_new_session_by_default(self) -> None:
         runtime = SimpleNamespace(
             create_session=lambda: SimpleNamespace(id="new-session", messages=[]),

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from openagent.config.models import ProviderProfileSettings, ProviderSettings
 from openagent.runtime.agent import OpenAgentRuntime
 
 
@@ -39,6 +40,38 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("Tool behavior:", prompt)
         self.assertIn("Workspace:", prompt)
         self.assertIn("bash", prompt)
+
+    def test_switch_provider_model_updates_runtime_and_compact_manager(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(
+            provider=ProviderSettings(name="anthropic", model="glm-5", max_tokens=8000),
+            provider_profiles={
+                "openai": ProviderProfileSettings(
+                    name="openai",
+                    models=["gpt-4.1", "gpt-4.1-mini"],
+                    default_model="gpt-4.1",
+                    api_key="",
+                    base_url="https://api.openai.com/v1",
+                    max_tokens=4096,
+                    timeout_seconds=60,
+                )
+            },
+        )
+        runtime.compact_manager = SimpleNamespace(provider=None, model_max_tokens=0)
+        runtime.provider = "old-provider"
+        runtime._instantiate_provider = lambda provider_settings: {
+            "provider": provider_settings.name,
+            "model": provider_settings.model,
+        }
+
+        message = OpenAgentRuntime.switch_provider_model(runtime, "openai", "gpt-4.1-mini")
+
+        self.assertIn("gpt-4.1-mini", message)
+        self.assertEqual(runtime.settings.provider.name, "openai")
+        self.assertEqual(runtime.settings.provider.model, "gpt-4.1-mini")
+        self.assertEqual(runtime.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
+        self.assertEqual(runtime.compact_manager.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
+        self.assertEqual(runtime.compact_manager.model_max_tokens, 4096)
 
 
 if __name__ == "__main__":

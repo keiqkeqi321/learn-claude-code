@@ -22,6 +22,7 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Button, Dialog, Label, RadioList
 
 COMMAND_SPECS = [
+    ("/model", "Choose the active provider and model"),
     ("/compact", "Compact the current session context"),
     ("/tasks", "Show persistent tasks"),
     ("/team", "Show teammate roster and states"),
@@ -245,7 +246,7 @@ def fallback_prompt_message() -> str:
     return PROMPT_ANSI
 
 
-def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
+def choose_item_interactively(title: str, subtitle: str, items: list[tuple[str, str]]) -> str | None:
     if not items:
         return None
 
@@ -273,11 +274,11 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
             get_app().exit(result=None)
 
         dialog = Dialog(
-            title="Resume Session",
+            title=title,
             body=HSplit(
                 [
                     Label(
-                        text="Choose a previous session to resume.",
+                        text=subtitle,
                         style="class:session-picker.subtitle",
                         dont_extend_height=True,
                     ),
@@ -318,7 +319,8 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
         )
         return app.run()
     except Exception:
-        print("Choose a session to resume:")
+        print(title)
+        print(subtitle)
         print("Move: enter the number shown below. Leave blank to cancel.")
         for index, (_, label) in enumerate(items, start=1):
             print(f"{index}. {label}")
@@ -331,6 +333,10 @@ def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
                 if 1 <= selected <= len(items):
                     return items[selected - 1][0]
             print("Invalid selection.")
+
+
+def choose_session_interactively(items: list[tuple[str, str]]) -> str | None:
+    return choose_item_interactively("Resume Session", "Choose a previous session to resume.", items)
 
 
 def format_session_timestamp(timestamp: float | None) -> str:

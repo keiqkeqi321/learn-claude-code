@@ -24,7 +24,6 @@ OpenAgent is a modular AI agent CLI that ports the feature set of `agents/s_full
 OpenAgent/
   pyproject.toml
   README.md
-  .env.example
   openagent.toml.example
   openagent/
     cli/
@@ -46,10 +45,9 @@ OpenAgent/
 pip install -e ./OpenAgent
 ```
 
-2. Copy configuration files if needed:
+2. Copy the config file:
 
 ```bash
-cp OpenAgent/.env.example .env
 cp OpenAgent/openagent.toml.example openagent.toml
 ```
 
@@ -71,6 +69,14 @@ You can also resume a previous session through the picker:
 python -m openagent -r
 ```
 
+You can override the provider or model for a single run without editing config files:
+
+```bash
+python -m openagent --provider anthropic --model glm-5
+python -m openagent --provider openai --model gpt-4.1
+python -m openagent run --provider openai --model gpt-4.1 "Summarize this repo"
+```
+
 If you install the console entrypoint, the same commands work as:
 
 ```bash
@@ -82,31 +88,19 @@ openagent -r
 
 OpenAgent reads configuration from:
 
-1. `.env` in the workspace root
-2. process environment variables
-3. `openagent.toml` in the workspace root
+1. `openagent.toml` in the workspace root
+
+For ad-hoc switching, command-line `--provider` and `--model` overrides take precedence for the current invocation only.
 
 `openagent.toml` is optional. Missing values fall back to defaults from `openagent/config/settings.py`.
-
-### Environment Variables
-
-Provider-related environment variables:
-
-- `OPENAGENT_PROVIDER`
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_BASE_URL`
-- `MODEL_ID`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
-- `OPENAI_ORG`
 
 ### openagent.toml
 
 Supported top-level sections:
 
 - `[agent]`
-- `[provider]`
+- `[providers]`
+- `[providers.<name>]`
 - `[runtime]`
 - `[[mcp_servers]]` or `[mcp_servers.<name>]`
 
@@ -120,10 +114,23 @@ name = "OpenAgent"
 # You are a careful coding agent.
 # """
 
-[provider]
-name = "anthropic" # or "openai"
-model = "claude-sonnet-4-5"
+[providers]
+default = "anthropic"
+
+[providers.anthropic]
+models = ["claude-sonnet-4-5", "claude-3-5-haiku-latest"]
+default_model = "claude-sonnet-4-5"
+api_key = "replace-me"
 # base_url = "https://api.anthropic.com"
+# max_tokens = 8000
+# timeout_seconds = 120
+
+[providers.openai]
+models = ["gpt-4.1", "gpt-4.1-mini"]
+default_model = "gpt-4.1"
+api_key = "replace-me"
+# base_url = "https://api.openai.com/v1"
+# organization = "org_xxx"
 # max_tokens = 8000
 # timeout_seconds = 120
 
@@ -154,6 +161,31 @@ http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
 startup_timeout_sec = 20
 enabled = false
 ```
+
+### Selecting a Model
+
+There are now three ways to choose the active model:
+
+1. Configure multiple models under `[providers.<name>]` in `openagent.toml`.
+2. Use `/model` inside the REPL to interactively switch provider and model.
+3. Pass `--provider` and `--model` on the command line for a one-off override.
+
+Examples:
+
+```bash
+openagent --provider anthropic --model glm-5
+openagent chat --provider anthropic --model claude-sonnet-4-5
+openagent run --provider openai --model gpt-4.1 "Explain the failing tests"
+openagent doctor --provider openai --model gpt-4.1
+```
+
+Inside the REPL, run:
+
+```text
+/model
+```
+
+OpenAgent will first show a provider picker, then a model picker limited to the models configured under that provider.
 
 ### Agent Prompt Configuration
 
@@ -238,6 +270,7 @@ Supported MCP fields include:
 ## REPL Commands
 
 - `/compact`
+- `/model`
 - `/tasks`
 - `/team`
 - `/inbox`

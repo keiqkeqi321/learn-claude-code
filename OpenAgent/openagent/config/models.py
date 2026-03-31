@@ -17,6 +17,18 @@ class ProviderSettings:
 
 
 @dataclass(slots=True)
+class ProviderProfileSettings:
+    name: str
+    models: list[str] = field(default_factory=list)
+    default_model: str = ""
+    api_key: str = ""
+    base_url: str | None = None
+    organization: str | None = None
+    max_tokens: int = 8_000
+    timeout_seconds: int = 120
+
+
+@dataclass(slots=True)
 class MCPServerSettings:
     name: str
     transport: str = "stdio"
@@ -70,5 +82,6 @@ class AppSettings:
     provider: ProviderSettings
     runtime: RuntimeSettings
     storage: StorageSettings
+    provider_profiles: dict[str, ProviderProfileSettings] = field(default_factory=dict)
     mcp_servers: list[MCPServerSettings] = field(default_factory=list)
     raw_config: dict[str, Any] = field(default_factory=dict)

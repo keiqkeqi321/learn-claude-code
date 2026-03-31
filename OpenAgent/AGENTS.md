@@ -78,7 +78,8 @@ Primary config files:
 Key config sections in `openagent.toml`:
 
 - `[agent]`
-- `[provider]`
+- `[providers]`
+- `[providers.<name>]`
 - `[runtime]`
 - `[mcp_servers.<name>]` or `[[mcp_servers]]`
 

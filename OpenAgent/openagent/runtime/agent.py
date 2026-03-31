@@ -18,7 +18,7 @@ from typing import Any
 
 from openagent.collaboration.bus import MessageBus
 from openagent.collaboration.protocols import RequestTracker
-from openagent.config.models import AppSettings
+from openagent.config.models import AppSettings, ProviderProfileSettings, ProviderSettings
 from openagent.mcp.registry import MCPRegistry
 from openagent.providers.anthropic_provider import AnthropicProvider
 from openagent.providers.base import LLMProvider
@@ -242,9 +242,37 @@ class OpenAgentRuntime:
         )
 
     def _make_provider(self) -> LLMProvider:
-        if self.settings.provider.name == "openai":
-            return OpenAIProvider(self.settings.provider)
-        return AnthropicProvider(self.settings.provider)
+        return self._instantiate_provider(self.settings.provider)
+
+    def _instantiate_provider(self, provider_settings: ProviderSettings) -> LLMProvider:
+        if provider_settings.name == "openai":
+            return OpenAIProvider(provider_settings)
+        return AnthropicProvider(provider_settings)
+
+    def configured_provider_profiles(self) -> dict[str, ProviderProfileSettings]:
+        return dict(self.settings.provider_profiles)
+
+    def switch_provider_model(self, provider_name: str, model: str) -> str:
+        normalized_provider = provider_name.strip().lower()
+        normalized_model = model.strip()
+        if normalized_provider not in self.settings.provider_profiles:
+            raise ValueError(f"Provider '{normalized_provider}' is not configured.")
+        profile = self.settings.provider_profiles[normalized_provider]
+        if normalized_model not in profile.models:
+            raise ValueError(f"Model '{normalized_model}' is not configured for provider '{normalized_provider}'.")
+        self.settings.provider = ProviderSettings(
+            name=profile.name,
+            model=normalized_model,
+            api_key=profile.api_key,
+            base_url=profile.base_url,
+            organization=profile.organization,
+            max_tokens=profile.max_tokens,
+            timeout_seconds=profile.timeout_seconds,
+        )
+        self.provider = self._instantiate_provider(self.settings.provider)
+        self.compact_manager.provider = self.provider
+        self.compact_manager.model_max_tokens = self.settings.provider.max_tokens
+        return f"Switched to provider '{self.settings.provider.name}' with model '{self.settings.provider.model}'."
 
     def _register_core_tools(self, registry: ToolRegistry) -> None:
         register_shell_tool(registry)
@@ -588,6 +616,7 @@ class OpenAgentRuntime:
             f"provider: {self.settings.provider.name}",
             f"model: {self.settings.provider.model}",
             f"api_key_configured: {'yes' if self.settings.provider.api_key else 'no'}",
+            f"configured_providers: {', '.join(sorted(self.settings.provider_profiles))}",
             f"skills_dir: {'present' if (self.settings.workspace_root / 'skills').exists() else 'missing'}",
             f"data_dir: {self.settings.storage.data_dir}",
         ]

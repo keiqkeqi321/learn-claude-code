@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from openagent.cli.repl import TurnQueueRunner
+from openagent.cli.repl import TurnQueueRunner, _handle_model_command
 
 
 def _render_prompt_text(fragments) -> str:
@@ -46,6 +47,21 @@ class ReplTodoTests(unittest.TestCase):
 
         self.assertNotIn("todo (", rendered)
         self.assertEqual(rendered, "openagent >> ")
+
+    def test_model_command_switches_provider_and_model_from_interactive_choices(self) -> None:
+        runtime = SimpleNamespace(
+            configured_provider_profiles=lambda: {
+                "anthropic": SimpleNamespace(default_model="glm-5", models=["glm-5", "claude-sonnet-4-5"])
+            },
+            switch_provider_model=lambda provider, model: f"switched {provider}:{model}",
+        )
+
+        with patch("openagent.cli.repl.choose_item_interactively", side_effect=["anthropic", "glm-5"]), patch(
+            "builtins.print"
+        ) as mock_print:
+            _handle_model_command(runtime)
+
+        mock_print.assert_called_with("switched anthropic:glm-5")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from openagent.cli.commands import ConsoleStreamer
 from openagent.cli.prompting import (
     COMMAND_SPECS,
     PROMPT_TEXT,
+    choose_item_interactively,
     create_prompt_session,
     fallback_prompt_message,
     styled_prompt_message,
@@ -281,6 +282,41 @@ def _is_read_only_command(command: str) -> bool:
     return any(command == prefix or command.startswith(f"{prefix} ") for prefix in READ_ONLY_COMMAND_PREFIXES)
 
 
+def _handle_model_command(runtime) -> None:
+    profiles = runtime.configured_provider_profiles()
+    if not profiles:
+        print("[no configured providers]")
+        return
+    provider_items = [
+        (
+            name,
+            f"{name} | default={profile.default_model} | models={len(profile.models)}",
+        )
+        for name, profile in sorted(profiles.items())
+    ]
+    selected_provider = choose_item_interactively("Choose Provider", "Select the provider to use for subsequent turns.", provider_items)
+    if not selected_provider:
+        print("[model selection cancelled]")
+        return
+    profile = profiles[selected_provider]
+    model_items = [
+        (
+            model,
+            f"{model}{' (default)' if model == profile.default_model else ''}",
+        )
+        for model in profile.models
+    ]
+    selected_model = choose_item_interactively(
+        "Choose Model",
+        f"Select a configured model under provider '{selected_provider}'.",
+        model_items,
+    )
+    if not selected_model:
+        print("[model selection cancelled]")
+        return
+    print(runtime.switch_provider_model(selected_provider, selected_model))
+
+
 def run_repl(runtime, session, resumed: bool = False) -> int:
     prompt_session = None
     try:
@@ -332,6 +368,12 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     continue
                 runtime.compact_session(session)
                 print("[manual compact complete]")
+                continue
+            if stripped == "/model":
+                if runner.has_inflight_work():
+                    print("[busy; wait for queued responses before /model]")
+                    continue
+                _handle_model_command(runtime)
                 continue
             if stripped == "/tasks":
                 tasks = runtime.task_store.list_all()

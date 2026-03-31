@@ -6,11 +6,20 @@ name = "OpenAgent"
 # Be precise, pragmatic, and direct. Prefer concrete actions over vague advice.
 # """
 
-[provider]
-name = "anthropic"
-model = "glm-5"
-# base_url = "https://api.anthropic.com"
-# max_tokens = 8000
+[providers]
+default = "anthropic"
+
+[providers.anthropic]
+models = ["glm-5", "kimi-k2.5", "qwen3.5-plus"]
+default_model = "glm-5"
+api_key = "sk-sp-54e807dab13a42f88021d34da7107e86"
+base_url = "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+
+[providers.openai]
+models = ["glm-5", "kimi-k2.5", "qwen3.5-plus"]
+default_model = "gpt-4.1"
+api_key = "sk-sp-54e807dab13a42f88021d34da7107e86"
+base_url = "https://coding.dashscope.aliyuncs.com/v1"
 
 [runtime]
 token_threshold = 100000

@@ -6,10 +6,22 @@ name = "OpenAgent"
 # Be precise, pragmatic, and direct. Prefer concrete actions over vague advice.
 # """
 
-[provider]
-name = "anthropic"
-model = "claude-sonnet-4-5"
+[providers]
+default = "anthropic"
+
+[providers.anthropic]
+models = ["claude-sonnet-4-5", "claude-3-5-haiku-latest"]
+default_model = "claude-sonnet-4-5"
+api_key = "replace-with-your-anthropic-key"
 # base_url = "https://api.anthropic.com"
+# max_tokens = 8000
+
+[providers.openai]
+models = ["gpt-4.1", "gpt-4.1-mini"]
+default_model = "gpt-4.1"
+api_key = "replace-with-your-openai-key"
+# base_url = "https://api.openai.com/v1"
+# organization = "org_xxx"
 # max_tokens = 8000
 
 [runtime]

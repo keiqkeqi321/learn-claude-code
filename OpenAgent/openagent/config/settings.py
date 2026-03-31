@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import os
 import tomllib
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 from openagent.config.models import (
     AgentSettings,
     AppSettings,
     MCPServerSettings,
+    ProviderProfileSettings,
     ProviderSettings,
     RuntimeSettings,
     StorageSettings,
@@ -81,10 +79,92 @@ def _storage_settings(workspace_root: Path) -> StorageSettings:
     )
 
 
-def load_settings(workspace_root: str | Path | None = None) -> AppSettings:
+def _default_provider_profile(name: str) -> ProviderProfileSettings:
+    provider_name = name.strip().lower()
+    if provider_name == "openai":
+        return ProviderProfileSettings(
+            name="openai",
+            models=["gpt-4.1"],
+            default_model="gpt-4.1",
+            api_key="",
+            base_url="https://api.openai.com/v1",
+            organization=None,
+        )
+    return ProviderProfileSettings(
+        name="anthropic",
+        models=["claude-sonnet-4-5"],
+        default_model="claude-sonnet-4-5",
+        api_key="",
+        base_url=None,
+    )
+
+
+def _build_provider_profile(name: str, item: dict) -> ProviderProfileSettings:
+    provider_name = name.strip().lower()
+    defaults = _default_provider_profile(provider_name)
+    raw_models = item.get("models", [])
+    models = [str(model).strip() for model in raw_models if str(model).strip()]
+    default_model = str(item.get("default_model", "")).strip() or defaults.default_model
+    if default_model and default_model not in models:
+        models = [*models, default_model]
+    if not models:
+        models = list(defaults.models)
+        default_model = defaults.default_model
+    return ProviderProfileSettings(
+        name=provider_name,
+        models=models,
+        default_model=default_model or models[0],
+        api_key=str(item.get("api_key", defaults.api_key)),
+        base_url=str(item["base_url"]) if item.get("base_url") else defaults.base_url,
+        organization=str(item["organization"]) if item.get("organization") else defaults.organization,
+        max_tokens=int(item.get("max_tokens", defaults.max_tokens)),
+        timeout_seconds=int(item.get("timeout_seconds", defaults.timeout_seconds)),
+    )
+
+
+def _load_provider_profiles(raw: dict) -> tuple[dict[str, ProviderProfileSettings], str]:
+    providers_raw = raw.get("providers", {})
+    profiles: dict[str, ProviderProfileSettings] = {}
+    configured_default = ""
+    if isinstance(providers_raw, dict):
+        configured_default = str(providers_raw.get("default", "")).strip().lower()
+        for name, item in providers_raw.items():
+            if name == "default" or not isinstance(item, dict):
+                continue
+            profiles[str(name).strip().lower()] = _build_provider_profile(str(name), item)
+    if not profiles:
+        fallback_name = "anthropic"
+        profiles[fallback_name] = _default_provider_profile(fallback_name)
+        return profiles, fallback_name
+    if configured_default:
+        if configured_default not in profiles:
+            raise ValueError(f"Configured default provider '{configured_default}' is not defined in [providers].")
+        return profiles, configured_default
+    return profiles, next(iter(profiles))
+
+
+def _materialize_provider(profile: ProviderProfileSettings, model: str | None = None) -> ProviderSettings:
+    selected_model = (model or profile.default_model).strip()
+    if selected_model not in profile.models:
+        raise ValueError(f"Model '{selected_model}' is not configured for provider '{profile.name}'.")
+    return ProviderSettings(
+        name=profile.name,
+        model=selected_model,
+        api_key=profile.api_key,
+        base_url=profile.base_url,
+        organization=profile.organization,
+        max_tokens=profile.max_tokens,
+        timeout_seconds=profile.timeout_seconds,
+    )
+
+
+def load_settings(
+    workspace_root: str | Path | None = None,
+    *,
+    provider_override: str | None = None,
+    model_override: str | None = None,
+) -> AppSettings:
     root = Path(workspace_root or Path.cwd()).resolve()
-    load_dotenv(root / ".env", override=False)
-    load_dotenv(override=False)
     config_path = root / "openagent.toml"
     raw = _read_toml(config_path)
     agent_raw = raw.get("agent", {})
@@ -93,27 +173,11 @@ def load_settings(workspace_root: str | Path | None = None) -> AppSettings:
         system_prompt=str(agent_raw["system_prompt"]).strip() if agent_raw.get("system_prompt") else None,
     )
 
-    provider_raw = raw.get("provider", {})
-    provider_name = str(provider_raw.get("name", os.getenv("OPENAGENT_PROVIDER", "anthropic"))).strip().lower()
-    if provider_name == "openai":
-        provider = ProviderSettings(
-            name="openai",
-            model=str(provider_raw.get("model", os.getenv("OPENAI_MODEL", "gpt-4.1"))),
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=str(provider_raw.get("base_url", os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))),
-            organization=os.getenv("OPENAI_ORG") or provider_raw.get("organization"),
-            max_tokens=int(provider_raw.get("max_tokens", 8_000)),
-            timeout_seconds=int(provider_raw.get("timeout_seconds", 120)),
-        )
-    else:
-        provider = ProviderSettings(
-            name="anthropic",
-            model=str(provider_raw.get("model", os.getenv("MODEL_ID", "claude-sonnet-4-5"))),
-            api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-            base_url=os.getenv("ANTHROPIC_BASE_URL") or provider_raw.get("base_url"),
-            max_tokens=int(provider_raw.get("max_tokens", 8_000)),
-            timeout_seconds=int(provider_raw.get("timeout_seconds", 120)),
-        )
+    provider_profiles, configured_provider_name = _load_provider_profiles(raw)
+    provider_name = (provider_override or configured_provider_name).strip().lower()
+    if provider_name not in provider_profiles:
+        raise ValueError(f"Provider '{provider_name}' is not configured in [providers].")
+    provider = _materialize_provider(provider_profiles[provider_name], model_override)
 
     runtime_raw = raw.get("runtime", {})
     runtime = RuntimeSettings(
@@ -135,6 +199,7 @@ def load_settings(workspace_root: str | Path | None = None) -> AppSettings:
         provider=provider,
         runtime=runtime,
         storage=_storage_settings(root),
+        provider_profiles=provider_profiles,
         mcp_servers=mcp_servers,
         raw_config=raw,
     )
