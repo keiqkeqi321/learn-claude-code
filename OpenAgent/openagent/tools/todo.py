@@ -4,6 +4,12 @@ from typing import Any
 
 from openagent.tools.registry import ToolDefinition
 
+TODO_STATUS_MARKERS = {
+    "pending": "☐",
+    "in_progress": "⏳",
+    "completed": "✅",
+}
+
 
 class TodoManager:
     def update(self, session, items: list[dict[str, Any]]) -> str:
@@ -41,11 +47,7 @@ class TodoManager:
         lines: list[str] = []
         done = 0
         for item in session.todo_items:
-            marker = {
-                "pending": "[ ]",
-                "in_progress": "[>]",
-                "completed": "[x]",
-            }.get(item["status"], "[?]")
+            marker = TODO_STATUS_MARKERS.get(item["status"], "•")
             if item["status"] == "completed":
                 done += 1
             suffix = f" <- {item['activeForm']}" if item["status"] == "in_progress" else ""

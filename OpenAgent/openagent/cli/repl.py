@@ -17,6 +17,7 @@ from openagent.cli.prompting import (
     styled_prompt_message,
 )
 from openagent.runtime.messages import render_text_content
+from openagent.tools.todo import TODO_STATUS_MARKERS
 
 try:
     from prompt_toolkit.patch_stdout import patch_stdout
@@ -203,11 +204,14 @@ class TurnQueueRunner:
             return styled_prompt_message()
         prompt_line = list(styled_prompt_message())
         status_line = self._status_line()
+        todo_lines = self._todo_lines()
         queue_lines = self._queue_preview_lines()
         fragments = []
         if status_line:
             style = "fg:#22c55e" if status_line == self.DONE_TEXT else "fg:#eab308"
             fragments.extend([(style, status_line), ("", "\n")])
+        for style, line in todo_lines:
+            fragments.extend([(style, line), ("", "\n")])
         for index, queue_line in enumerate(queue_lines, start=1):
             fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
         if not fragments:
@@ -229,6 +233,35 @@ class TurnQueueRunner:
     def _queue_preview_lines(self) -> list[str]:
         with self._lock:
             return [preview for _, preview in self._queued_previews]
+
+    def _todo_lines(self) -> list[tuple[str, str]]:
+        todo_items = list(getattr(self.session, "todo_items", []) or [])
+        if not todo_items:
+            return []
+        if not any(item.get("status") != "completed" for item in todo_items):
+            return []
+
+        completed = sum(1 for item in todo_items if item.get("status") == "completed")
+        lines: list[tuple[str, str]] = [("fg:#5eead4", f"todo ({completed}/{len(todo_items)} completed)")]
+        styles = {
+            "pending": "fg:#cbd5e1",
+            "in_progress": "fg:#fbbf24",
+            "completed": "fg:#64748b",
+        }
+        for item in todo_items:
+            status = str(item.get("status", "pending")).lower()
+            marker = TODO_STATUS_MARKERS.get(status, "•")
+            style = styles.get(status, "fg:#cbd5e1")
+            text = str(item.get("content", "")).strip()
+            if not text:
+                continue
+            if status == "in_progress":
+                active_form = str(item.get("activeForm", "")).strip()
+                suffix = f" <- {active_form}" if active_form else ""
+            else:
+                suffix = ""
+            lines.append((style, f"{marker} {text}{suffix}"))
+        return lines
 
     def _summarize_query(self, query: str) -> str:
         single_line = " ".join(query.split())

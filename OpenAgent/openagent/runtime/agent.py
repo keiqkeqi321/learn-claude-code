@@ -48,6 +48,7 @@ from openagent.tools.todo import TodoManager, register_todo_tool
 
 class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
+    SILENT_TOOL_NAMES = {"TodoWrite"}
     _ansi_output_enabled: bool | None = None
     DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
         "You are {name}, a top-rated AI assistant.\n"
@@ -130,6 +131,8 @@ class OpenAgentRuntime:
             output=output,
             category=category,
         )
+        if tool_name in self.SILENT_TOOL_NAMES:
+            return log_entry["id"]
         if not sys.stdout.isatty():
             return log_entry["id"]
         border = f"{'=' * 18} {category} {actor} {'=' * 18}"
