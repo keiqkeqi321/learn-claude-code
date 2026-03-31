@@ -86,6 +86,10 @@ Environment variables:
 Optional `openagent.toml`:
 
 ```toml
+[agent]
+name = "OpenAgent"
+system_prompt = """你是一个专业的AI助手..."""  # 可选，自定义系统提示词
+
 [provider]
 name = "openai"
 model = "gpt-4.1"
@@ -105,6 +109,82 @@ http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
 startup_timeout_sec = 20
 enabled = true
 ```
+
+### 配置系统提示词
+
+OpenAgent 支持两种方式配置系统提示词：
+
+#### 1. 使用默认模板（仅配置名称）
+
+如果只配置 `agent.name`，系统会使用内置的默认提示词模板：
+
+```toml
+[agent]
+name = "MyAgent"
+```
+
+默认模板会自动将 `{name}` 替换为你配置的名称，生成如下提示词：
+
+```
+You are MyAgent, a top-rated AI assistant.
+You are exceptionally strong at coding tasks, software design, debugging, implementation, and complex reasoning.
+You solve problems with clear, defensible thinking, strong technical judgment, and careful tool use.
+Be precise, pragmatic, and direct. Prefer concrete actions over vague advice.
+When needed, inspect the workspace and use tools to verify assumptions before acting.
+```
+
+#### 2. 完全自定义系统提示词
+
+通过 `system_prompt` 字段可以完全覆盖默认提示词：
+
+```toml
+[agent]
+name = "CodeReviewer"
+system_prompt = """你是一个专业的代码审查专家。
+
+你的职责：
+- 审查代码质量和安全性
+- 提供改进建议
+- 确保代码符合最佳实践
+
+请始终保持专业和友好的态度。"""
+```
+
+运行时会根据角色添加额外信息：
+- **Lead Agent**: 会添加工具使用指南、技能列表、工作空间路径等信息
+- **Worker Agent**: 会添加协作协议、消息通信、空闲循环等信息
+
+#### 3. 多行提示词配置
+
+对于较长的系统提示词，可以使用 TOML 的多行字符串语法：
+
+```toml
+[agent]
+name = "OpenAgent"
+system_prompt = '''
+你是一个专业的AI编程助手。
+
+核心能力：
+1. 代码编写与调试
+2. 软件架构设计
+3. 问题分析与解决
+
+工作原则：
+- 代码优先，避免空谈
+- 注重可读性和可维护性
+- 遵循项目既有规范
+'''
+```
+
+或使用字面量字符串（保留换行）：
+
+```toml
+[agent]
+name = "OpenAgent"
+system_prompt = """
+第一行内容
+第二行内容
+"""
 
 ## REPL Commands
 

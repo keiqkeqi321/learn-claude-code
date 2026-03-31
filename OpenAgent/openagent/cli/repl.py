@@ -334,6 +334,8 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                 print(f"[unknown command] {stripped}")
                 continue
             was_active, queued_before = runner.enqueue(query)
+            if runner.stable_prompt and not was_active and queued_before == 0:
+                print(f"{PROMPT_TEXT}{query}")
             if (was_active or queued_before) and not runner.stable_prompt:
                 ahead = queued_before + (1 if was_active else 0)
                 print(f"[queued; {ahead} item(s) ahead]")
