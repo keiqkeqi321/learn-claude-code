@@ -76,7 +76,7 @@ class TurnQueueRunner:
         self.runtime = runtime
         self.session = session
         self.stable_prompt = stable_prompt
-        self._queue: Queue[str | None] = Queue()
+        self._queue: Queue[tuple[int, str, bool] | None] = Queue()
         self._lock = Lock()
         self._worker = Thread(target=self._worker_loop, name="openagent-chat-worker", daemon=True)
         self._active = False
@@ -85,6 +85,8 @@ class TurnQueueRunner:
         self._status_changed_at = time.monotonic()
         self._ui_invalidator = None
         self._thinking_phrase = self.THINKING_PHRASES[0]
+        self._next_query_id = 1
+        self._queued_previews: list[tuple[int, str]] = []
 
     def start(self) -> None:
         self._worker.start()
@@ -100,8 +102,13 @@ class TurnQueueRunner:
         with self._lock:
             was_active = self._active
             queued_before = self._queued
+            query_id = self._next_query_id
+            self._next_query_id += 1
             self._queued += 1
-        self._queue.put(query)
+            show_queue_preview = was_active or queued_before > 0
+            if show_queue_preview:
+                self._queued_previews.append((query_id, self._summarize_query(query)))
+        self._queue.put((query_id, query, show_queue_preview))
         self._invalidate_ui()
         return was_active, queued_before
 
@@ -119,6 +126,7 @@ class TurnQueueRunner:
 
     def _clear_pending(self) -> int:
         dropped = 0
+        dropped_ids: set[int] = set()
         while True:
             try:
                 item = self._queue.get_nowait()
@@ -127,11 +135,18 @@ class TurnQueueRunner:
             if item is None:
                 self._queue.put(None)
                 break
+            query_id, _, _ = item
+            dropped_ids.add(query_id)
             dropped += 1
             self._queue.task_done()
         if dropped:
             with self._lock:
                 self._queued = max(0, self._queued - dropped)
+                self._queued_previews = [
+                    (preview_id, preview)
+                    for preview_id, preview in self._queued_previews
+                    if preview_id not in dropped_ids
+                ]
             self._invalidate_ui()
         return dropped
 
@@ -141,18 +156,26 @@ class TurnQueueRunner:
             if query is None:
                 self._queue.task_done()
                 return
+            query_id, query_text, echo_on_start = query
             with self._lock:
                 self._queued = max(0, self._queued - 1)
                 self._active = True
                 self._thinking_phrase = random.choice(self.THINKING_PHRASES)
+                self._queued_previews = [
+                    (preview_id, preview)
+                    for preview_id, preview in self._queued_previews
+                    if preview_id != query_id
+                ]
             self._set_status("thinking")
+            if echo_on_start:
+                print(f"{PROMPT_TEXT}{query_text}")
             streamer = ConsoleStreamer(
                 start_on_new_line=True,
                 line_buffered=self.stable_prompt,
                 on_first_output=None,
             )
             try:
-                response = self.runtime.run_turn(self.session, query, text_callback=streamer)
+                response = self.runtime.run_turn(self.session, query_text, text_callback=streamer)
                 if streamer.has_output:
                     streamer.finish()
                     print()
@@ -180,9 +203,16 @@ class TurnQueueRunner:
             return styled_prompt_message()
         prompt_line = list(styled_prompt_message())
         status_line = self._status_line()
-        if not status_line:
+        queue_lines = self._queue_preview_lines()
+        fragments = []
+        if status_line:
+            style = "fg:#22c55e" if status_line == self.DONE_TEXT else "fg:#eab308"
+            fragments.extend([(style, status_line), ("", "\n")])
+        for index, queue_line in enumerate(queue_lines, start=1):
+            fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
+        if not fragments:
             return prompt_line
-        return [("fg:#eab308", status_line), ("", "\n"), *prompt_line]
+        return [*fragments, *prompt_line]
 
     def _status_line(self) -> str:
         with self._lock:
@@ -195,6 +225,16 @@ class TurnQueueRunner:
         if status == "done":
             return self.DONE_TEXT
         return ""
+
+    def _queue_preview_lines(self) -> list[str]:
+        with self._lock:
+            return [preview for _, preview in self._queued_previews]
+
+    def _summarize_query(self, query: str) -> str:
+        single_line = " ".join(query.split())
+        if len(single_line) <= 48:
+            return single_line
+        return single_line[:45] + "..."
 
     def _invalidate_ui(self) -> None:
         if self._ui_invalidator is not None:
@@ -294,7 +334,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                 print(f"[unknown command] {stripped}")
                 continue
             was_active, queued_before = runner.enqueue(query)
-            if was_active or queued_before:
+            if (was_active or queued_before) and not runner.stable_prompt:
                 ahead = queued_before + (1 if was_active else 0)
                 print(f"[queued; {ahead} item(s) ahead]")
     return 0

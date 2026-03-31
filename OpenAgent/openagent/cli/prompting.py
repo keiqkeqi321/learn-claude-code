@@ -202,6 +202,7 @@ def create_prompt_session(workspace_root: Path) -> PromptSession[str]:
         reserve_space_for_menu=8,
         complete_style=CompleteStyle.MULTI_COLUMN,
         key_bindings=bindings,
+        erase_when_done=True,
     )
 
 
