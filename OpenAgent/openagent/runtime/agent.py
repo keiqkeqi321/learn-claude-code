@@ -26,6 +26,11 @@ from openagent.providers.anthropic_provider import AnthropicProvider
 from openagent.providers.base import LLMProvider
 from openagent.providers.openai_provider import OpenAIProvider
 from openagent.runtime.compact import CompactManager, estimate_tokens, microcompact
+from openagent.runtime.execution_mode import (
+    DEFAULT_EXECUTION_MODE,
+    execution_mode_spec,
+    tool_block_message,
+)
 from openagent.runtime.events import ToolExecutionContext
 from openagent.runtime.messages import make_tool_result_message, make_user_text_message
 from openagent.runtime.session import AgentSession, SessionManager
@@ -99,6 +104,7 @@ class OpenAgentRuntime:
             settings: 应用配置对象。
         """
         self.settings = settings
+        self.execution_mode = DEFAULT_EXECUTION_MODE
         self.provider = self._make_provider()
         self.transcript_store = TranscriptStore(settings.storage.transcripts_dir)
         self.session_manager = SessionManager(SessionStore(settings.storage.sessions_dir), self.transcript_store)
@@ -375,6 +381,9 @@ class OpenAgentRuntime:
     def configured_provider_profiles(self) -> dict[str, ProviderProfileSettings]:
         return dict(self.settings.provider_profiles)
 
+    def authorize_tool_call(self, tool_name: str, payload: dict[str, Any], *, ctx=None) -> str | None:
+        return tool_block_message(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE), tool_name)
+
     def switch_provider_model(self, provider_name: str, model: str) -> str:
         normalized_provider = provider_name.strip().lower()
         normalized_model = model.strip()
@@ -507,6 +516,7 @@ class OpenAgentRuntime:
     def build_system_prompt(self, actor: str = "lead", role: str = "lead coding agent") -> str:
         base_prompt = self._base_system_prompt()
         environment_guidance = self._environment_guidance()
+        mode_guidance = execution_mode_spec(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE)).guidance
         identity_guidance = (
             "Identity rules:\n"
             f"- Your configured runtime provider is '{self.settings.provider.name}'.\n"
@@ -522,6 +532,7 @@ class OpenAgentRuntime:
                 "Use TodoWrite for short checklists. Use task for isolated subagent work. Use load_skill only when needed.\n"
                 "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
                 f"{identity_guidance}\n"
+                f"{mode_guidance}\n"
                 f"{environment_guidance}\n"
                 f"Available skills:\n{self.skill_loader.descriptions()}"
             )
@@ -532,6 +543,7 @@ class OpenAgentRuntime:
             "Use tools to complete current work, send messages when needed, and call idle when you have finished the current unit of work.\n"
             "While idle you may be resumed by inbox messages or unclaimed tasks.\n"
             f"{identity_guidance}\n"
+            f"{mode_guidance}\n"
             f"{environment_guidance}\n"
             f"Available skills:\n{self.skill_loader.descriptions()}"
         )

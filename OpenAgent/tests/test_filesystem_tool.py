@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from openagent.tools.filesystem import edit_file, write_file
+from openagent.tools.registry import ToolDefinition, ToolRegistry
 
 
 class FilesystemToolTests(unittest.TestCase):
@@ -52,6 +53,27 @@ class FilesystemToolTests(unittest.TestCase):
         self.assertEqual(result["added_lines"], 1)
         self.assertEqual(result["removed_lines"], 0)
         self.assertEqual(len(session.pending_file_changes), 1)
+
+    def test_tool_registry_applies_execution_mode_guard_before_write_handler(self) -> None:
+        registry = ToolRegistry()
+        called: list[dict[str, str]] = []
+        registry.register(
+            ToolDefinition(
+                name="write_file",
+                description="Write content to a file.",
+                input_schema={"type": "object", "properties": {}},
+                handler=lambda ctx, payload: called.append(payload) or {"status": "ok"},
+            )
+        )
+        ctx = SimpleNamespace(
+            runtime=SimpleNamespace(authorize_tool_call=lambda name, payload, ctx=None: "blocked by mode"),
+            session=None,
+        )
+
+        result = registry.execute(ctx, "write_file", {"path": "demo.txt"})
+
+        self.assertEqual(result, "blocked by mode")
+        self.assertEqual(called, [])
 
 
 if __name__ == "__main__":

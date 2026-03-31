@@ -18,6 +18,13 @@ from openagent.cli.prompting import (
     styled_prompt_message,
 )
 from openagent.runtime.agent import TurnInterrupted
+from openagent.runtime.execution_mode import (
+    DEFAULT_EXECUTION_MODE,
+    execution_mode_spec,
+    execution_mode_status_text,
+    next_execution_mode,
+    normalize_execution_mode,
+)
 from openagent.runtime.messages import render_text_content
 from openagent.tools.todo import TODO_STATUS_MARKERS
 
@@ -79,6 +86,8 @@ class TurnQueueRunner:
         self.runtime = runtime
         self.session = session
         self.stable_prompt = stable_prompt
+        self._execution_mode = normalize_execution_mode(getattr(runtime, "execution_mode", DEFAULT_EXECUTION_MODE))
+        setattr(self.runtime, "execution_mode", self._execution_mode)
         self._queue: Queue[tuple[int, str, bool] | None] = Queue()
         self._lock = Lock()
         self._worker = Thread(target=self._worker_loop, name="openagent-chat-worker", daemon=True)
@@ -228,23 +237,23 @@ class TurnQueueRunner:
         self._invalidate_ui()
 
     def prompt_message(self):
-        if not self.stable_prompt:
-            return styled_prompt_message()
         prompt_line = list(styled_prompt_message())
+        mode_line = self._execution_mode_fragments()
         status_line = self._status_line()
         todo_lines = self._todo_lines()
         queue_lines = self._queue_preview_lines()
         fragments = []
-        if status_line:
+        if self.stable_prompt and status_line:
             style = "fg:#22c55e" if status_line == self.DONE_TEXT else "fg:#eab308"
             fragments.extend([(style, status_line), ("", "\n")])
-        for style, line in todo_lines:
-            fragments.extend([(style, line), ("", "\n")])
-        for index, queue_line in enumerate(queue_lines, start=1):
-            fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
-        if not fragments:
-            return prompt_line
-        return [*fragments, *prompt_line]
+        if self.stable_prompt:
+            for style, line in todo_lines:
+                fragments.extend([(style, line), ("", "\n")])
+            for index, queue_line in enumerate(queue_lines, start=1):
+                fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
+        fragments.extend(prompt_line)
+        fragments.extend([("", "\n"), *mode_line, ("", "\n")])
+        return fragments
 
     def current_model_label(self) -> str:
         provider = getattr(self.runtime.settings, "provider", None)
@@ -256,6 +265,22 @@ class TurnQueueRunner:
 
     def bottom_toolbar(self):
         return [("fg:#94a3b8", self.current_model_label())]
+
+    def current_execution_mode(self):
+        return execution_mode_spec(self._execution_mode)
+
+    def execution_mode_label(self) -> str:
+        return execution_mode_status_text(self._execution_mode)
+
+    def execution_mode_ansi_label(self) -> str:
+        spec = self.current_execution_mode()
+        return f"{spec.ansi_color}{self.execution_mode_label()}\x1b[0m"
+
+    def cycle_execution_mode(self):
+        self._execution_mode = next_execution_mode(self._execution_mode)
+        setattr(self.runtime, "execution_mode", self._execution_mode)
+        self._invalidate_ui()
+        return self.current_execution_mode()
 
     def _status_line(self) -> str:
         with self._lock:
@@ -274,6 +299,13 @@ class TurnQueueRunner:
     def _queue_preview_lines(self) -> list[str]:
         with self._lock:
             return [preview for _, preview in self._queued_previews]
+
+    def _execution_mode_fragments(self):
+        spec = self.current_execution_mode()
+        return [
+            (spec.color, spec.title),
+            ("fg:#64748b", "  (Shift+Tab to cycle)"),
+        ]
 
     def _todo_lines(self) -> list[tuple[str, str]]:
         todo_items = list(getattr(self.session, "todo_items", []) or [])
@@ -383,6 +415,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
             runtime.settings.workspace_root,
             on_interrupt=runner.request_interrupt,
             is_busy=runner.has_inflight_work,
+            on_cycle_mode=runner.cycle_execution_mode,
         )
     except Exception:
         prompt_session = None
@@ -405,9 +438,13 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     )
                 else:
                     if sys.stdout.isatty():
-                        query = input(f"{fallback_prompt_message()}\n{runner.current_model_label()}\n")
+                        query = input(
+                            f"{fallback_prompt_message()}\n"
+                            f"{runner.execution_mode_ansi_label()}\n"
+                            f"{runner.current_model_label()}\n"
+                        )
                     else:
-                        query = input(f"{PROMPT_TEXT}\n{runner.current_model_label()}\n")
+                        query = input(f"{PROMPT_TEXT}\n{runner.execution_mode_label()}\n{runner.current_model_label()}\n")
             except (EOFError, KeyboardInterrupt):
                 print()
                 active, queued = runner.stats()

@@ -111,6 +111,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
             agent=SimpleNamespace(system_prompt=None, name="OpenAgent"),
             provider=SimpleNamespace(name="openai", model="kimi-k2.5"),
         )
+        runtime.execution_mode = "plan"
         runtime.skill_loader = SimpleNamespace(descriptions=lambda: "none")
 
         prompt = OpenAgentRuntime.build_system_prompt(runtime)
@@ -121,7 +122,27 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("bash", prompt)
         self.assertIn("Active provider: openai", prompt)
         self.assertIn("Active model: kimi-k2.5", prompt)
+        self.assertIn("Current mode: ⏸ plan mode on.", prompt)
+        self.assertIn("Return a concrete implementation plan", prompt)
         self.assertIn("Do not claim to be Claude", prompt)
+
+    def test_authorize_tool_call_blocks_non_edit_tools_in_accept_edits_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+
+        blocked = OpenAgentRuntime.authorize_tool_call(runtime, "bash", {"command": "git status"})
+        allowed = OpenAgentRuntime.authorize_tool_call(runtime, "write_file", {"path": "demo.txt", "content": "ok"})
+
+        self.assertIn("requires explicit user approval", blocked)
+        self.assertIsNone(allowed)
+
+    def test_authorize_tool_call_blocks_file_edits_in_plan_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+
+        blocked = OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"})
+
+        self.assertIn("workspace files are read-only", blocked)
 
     def test_switch_provider_model_updates_runtime_and_compact_manager(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

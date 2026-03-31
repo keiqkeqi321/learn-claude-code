@@ -228,6 +228,7 @@ def create_prompt_session(
     *,
     on_interrupt=None,
     is_busy=None,
+    on_cycle_mode=None,
 ) -> PromptSession[str]:
     bindings = KeyBindings()
 
@@ -275,6 +276,12 @@ def create_prompt_session(
         if _handle_tab_action(buffer):
             return
         buffer.insert_text("    ")
+
+    @bindings.add("s-tab")
+    def _handle_shift_tab(event) -> None:
+        if on_cycle_mode is not None:
+            on_cycle_mode()
+            return
 
     return PromptSession(
         history=FileHistory(str(_history_file(workspace_root))),

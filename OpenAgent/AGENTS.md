@@ -42,6 +42,13 @@ The runtime owns:
 
 - Running `openagent --workspace .` starts interactive chat directly.
 - Running `openagent -r` opens a session picker and resumes a selected session.
+- The REPL has four execution modes ordered by risk:
+  - `? for shortcuts`: read-only workspace access
+  - `⏸ plan mode on`: read-only plus planning-first behavior
+  - `⏵⏵ accept edits on`: file edits allowed, broader tools still blocked
+  - `! Yolo`: full autonomy
+- `Shift+Tab` cycles execution modes in the REPL.
+- The active execution mode is shown under `openagent >>` with color-coded risk.
 - Empty or incomplete sessions should not appear in resume history. A session must include both a visible user message and a visible assistant reply.
 - `TodoWrite` updates session-scoped todos.
 - Todos are shown persistently in the REPL status area above `openagent >>` while any item is still open.

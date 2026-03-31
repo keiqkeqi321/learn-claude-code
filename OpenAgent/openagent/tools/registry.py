@@ -36,6 +36,12 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return f"Unknown tool: {name}"
+        runtime = getattr(ctx, "runtime", None)
+        authorizer = getattr(runtime, "authorize_tool_call", None)
+        if callable(authorizer):
+            blocked = authorizer(name, payload, ctx=ctx)
+            if blocked is not None:
+                return blocked
         return tool.handler(ctx, payload)
 
     def names(self) -> list[str]:
