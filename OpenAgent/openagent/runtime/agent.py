@@ -49,6 +49,13 @@ from openagent.tools.todo import TodoManager, register_todo_tool
 class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
     _ansi_output_enabled: bool | None = None
+    DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
+        "You are {name}, a top-rated AI assistant.\n"
+        "You are exceptionally strong at coding tasks, software design, debugging, implementation, and complex reasoning.\n"
+        "You solve problems with clear, defensible thinking, strong technical judgment, and careful tool use.\n"
+        "Be precise, pragmatic, and direct. Prefer concrete actions over vague advice.\n"
+        "When needed, inspect the workspace and use tools to verify assumptions before acting."
+    )
 
     """OpenAgent 运行时类.
 
@@ -317,8 +324,10 @@ class OpenAgentRuntime:
         return f"Submitted plan request {request['request_id']}"
 
     def build_system_prompt(self, actor: str = "lead", role: str = "lead coding agent") -> str:
+        base_prompt = self._base_system_prompt()
         if actor == "lead":
             return (
+                f"{base_prompt}\n\n"
                 f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
                 "Use tools to solve coding tasks. Prefer task_create/task_update/task_list for longer work.\n"
                 "Use TodoWrite for short checklists. Use task for isolated subagent work. Use load_skill only when needed.\n"
@@ -326,12 +335,19 @@ class OpenAgentRuntime:
                 f"Available skills:\n{self.skill_loader.descriptions()}"
             )
         return (
+            f"{base_prompt}\n\n"
             f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
             "You are a persistent teammate following the s11 work/idle loop.\n"
             "Use tools to complete current work, send messages when needed, and call idle when you have finished the current unit of work.\n"
             "While idle you may be resumed by inbox messages or unclaimed tasks.\n"
             f"Available skills:\n{self.skill_loader.descriptions()}"
         )
+
+    def _base_system_prompt(self) -> str:
+        configured_prompt = self.settings.agent.system_prompt
+        if configured_prompt:
+            return configured_prompt
+        return self.DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(name=self.settings.agent.name)
 
     def create_session(self) -> AgentSession:
         return self.session_manager.create()

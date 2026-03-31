@@ -1,3 +1,11 @@
+[agent]
+name = "OpenAgent"
+# system_prompt = """
+# You are OpenAgent, a top-rated AI assistant.
+# You are exceptionally strong at coding tasks, implementation, debugging, and complex reasoning.
+# Be precise, pragmatic, and direct. Prefer concrete actions over vague advice.
+# """
+
 [provider]
 name = "anthropic"
 model = "claude-sonnet-4-5"

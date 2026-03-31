@@ -45,6 +45,12 @@ class RuntimeSettings:
 
 
 @dataclass(slots=True)
+class AgentSettings:
+    name: str = "OpenAgent"
+    system_prompt: str | None = None
+
+
+@dataclass(slots=True)
 class StorageSettings:
     data_dir: Path
     transcripts_dir: Path
@@ -60,6 +66,7 @@ class StorageSettings:
 @dataclass(slots=True)
 class AppSettings:
     workspace_root: Path
+    agent: AgentSettings
     provider: ProviderSettings
     runtime: RuntimeSettings
     storage: StorageSettings

@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from openagent.config.models import (
+    AgentSettings,
     AppSettings,
     MCPServerSettings,
     ProviderSettings,
@@ -86,6 +87,11 @@ def load_settings(workspace_root: str | Path | None = None) -> AppSettings:
     load_dotenv(override=False)
     config_path = root / "openagent.toml"
     raw = _read_toml(config_path)
+    agent_raw = raw.get("agent", {})
+    agent = AgentSettings(
+        name=str(agent_raw.get("name", "OpenAgent")).strip() or "OpenAgent",
+        system_prompt=str(agent_raw["system_prompt"]).strip() if agent_raw.get("system_prompt") else None,
+    )
 
     provider_raw = raw.get("provider", {})
     provider_name = str(provider_raw.get("name", os.getenv("OPENAGENT_PROVIDER", "anthropic"))).strip().lower()
@@ -125,6 +131,7 @@ def load_settings(workspace_root: str | Path | None = None) -> AppSettings:
 
     settings = AppSettings(
         workspace_root=root,
+        agent=agent,
         provider=provider,
         runtime=runtime,
         storage=_storage_settings(root),
