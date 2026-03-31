@@ -149,7 +149,7 @@ class TurnQueueRunner:
             streamer = ConsoleStreamer(
                 start_on_new_line=True,
                 line_buffered=self.stable_prompt,
-                on_first_output=self._mark_output_started,
+                on_first_output=None,
             )
             try:
                 response = self.runtime.run_turn(self.session, query, text_callback=streamer)
@@ -157,12 +157,10 @@ class TurnQueueRunner:
                     streamer.finish()
                     print()
                 elif response:
-                    self._mark_output_started()
                     print()
                     print(response)
                     print()
             except Exception as exc:
-                self._mark_output_started()
                 print(f"[turn failed] {exc}")
                 print()
             finally:
@@ -170,9 +168,6 @@ class TurnQueueRunner:
                     self._active = False
                 self._set_status("done")
                 self._queue.task_done()
-
-    def _mark_output_started(self) -> None:
-        self._set_status("")
 
     def _set_status(self, status: str) -> None:
         with self._lock:
