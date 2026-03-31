@@ -63,6 +63,34 @@ class SettingsOverrideTests(unittest.TestCase):
         self.assertEqual(settings.provider.api_key, "sk-test")
         self.assertEqual(settings.provider.base_url, "https://openai.example/v1")
         self.assertEqual(settings.provider.organization, "org-test")
+        self.assertEqual(settings.provider.provider_type, "openai")
+
+    def test_load_settings_allows_custom_provider_name_to_map_to_openai_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "openagent.toml").write_text(
+                textwrap.dedent(
+                    """
+                    [providers]
+                    default = "openrouter"
+
+                    [providers.openrouter]
+                    provider_type = "openai"
+                    models = ["stepfun/step-3.5-flash"]
+                    default_model = "stepfun/step-3.5-flash"
+                    api_key = "sk-test"
+                    base_url = "https://openrouter.ai/api/v1"
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(root)
+
+        self.assertEqual(settings.provider.name, "openrouter")
+        self.assertEqual(settings.provider.provider_type, "openai")
+        self.assertEqual(settings.provider.base_url, "https://openrouter.ai/api/v1")
+        self.assertEqual(settings.provider_profiles["openrouter"].provider_type, "openai")
 
     def test_load_settings_falls_back_to_builtin_default_when_profiles_not_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -70,6 +98,7 @@ class SettingsOverrideTests(unittest.TestCase):
             settings = load_settings(root)
 
         self.assertEqual(settings.provider.name, "anthropic")
+        self.assertEqual(settings.provider.provider_type, "anthropic")
         self.assertEqual(settings.provider.model, "claude-sonnet-4-5")
         self.assertEqual(settings.provider_profiles["anthropic"].models, ["claude-sonnet-4-5"])
 

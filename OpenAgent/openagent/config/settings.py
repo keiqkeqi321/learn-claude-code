@@ -146,11 +146,30 @@ def _storage_settings(workspace_root: Path) -> StorageSettings:
     )
 
 
-def _default_provider_profile(name: str) -> ProviderProfileSettings:
+def _default_provider_type(name: str) -> str:
     provider_name = name.strip().lower()
     if provider_name == "openai":
+        return "openai"
+    return "anthropic"
+
+
+def _normalize_provider_type(value: str | None, *, profile_name: str) -> str:
+    provider_type = str(value or "").strip().lower() or _default_provider_type(profile_name)
+    if provider_type not in {"anthropic", "openai"}:
+        raise ValueError(
+            f"Provider '{profile_name}' has unsupported provider_type '{provider_type}'. "
+            "Expected 'anthropic' or 'openai'."
+        )
+    return provider_type
+
+
+def _default_provider_profile(name: str) -> ProviderProfileSettings:
+    provider_name = name.strip().lower()
+    provider_type = _default_provider_type(provider_name)
+    if provider_type == "openai":
         return ProviderProfileSettings(
-            name="openai",
+            name=provider_name,
+            provider_type=provider_type,
             models=["gpt-4.1"],
             default_model="gpt-4.1",
             api_key="",
@@ -158,7 +177,8 @@ def _default_provider_profile(name: str) -> ProviderProfileSettings:
             organization=None,
         )
     return ProviderProfileSettings(
-        name="anthropic",
+        name=provider_name,
+        provider_type=provider_type,
         models=["claude-sonnet-4-5"],
         default_model="claude-sonnet-4-5",
         api_key="",
@@ -169,6 +189,7 @@ def _default_provider_profile(name: str) -> ProviderProfileSettings:
 def _build_provider_profile(name: str, item: dict) -> ProviderProfileSettings:
     provider_name = name.strip().lower()
     defaults = _default_provider_profile(provider_name)
+    provider_type = _normalize_provider_type(item.get("provider_type"), profile_name=provider_name)
     raw_models = item.get("models", [])
     models = [str(model).strip() for model in raw_models if str(model).strip()]
     default_model = str(item.get("default_model", "")).strip() or defaults.default_model
@@ -179,6 +200,7 @@ def _build_provider_profile(name: str, item: dict) -> ProviderProfileSettings:
         default_model = defaults.default_model
     return ProviderProfileSettings(
         name=provider_name,
+        provider_type=provider_type,
         models=models,
         default_model=default_model or models[0],
         api_key=str(item.get("api_key", defaults.api_key)),
@@ -216,6 +238,7 @@ def _materialize_provider(profile: ProviderProfileSettings, model: str | None = 
         raise ValueError(f"Model '{selected_model}' is not configured for provider '{profile.name}'.")
     return ProviderSettings(
         name=profile.name,
+        provider_type=profile.provider_type,
         model=selected_model,
         api_key=profile.api_key,
         base_url=profile.base_url,

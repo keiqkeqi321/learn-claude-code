@@ -8,6 +8,7 @@ from typing import Any
 @dataclass(slots=True)
 class ProviderSettings:
     name: str = "anthropic"
+    provider_type: str = "anthropic"
     model: str = ""
     api_key: str = ""
     base_url: str | None = None
@@ -19,6 +20,7 @@ class ProviderSettings:
 @dataclass(slots=True)
 class ProviderProfileSettings:
     name: str
+    provider_type: str = "anthropic"
     models: list[str] = field(default_factory=list)
     default_model: str = ""
     api_key: str = ""

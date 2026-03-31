@@ -382,7 +382,7 @@ class OpenAgentRuntime:
         return self._instantiate_provider(self.settings.provider)
 
     def _instantiate_provider(self, provider_settings: ProviderSettings) -> LLMProvider:
-        if provider_settings.name == "openai":
+        if provider_settings.provider_type == "openai":
             return OpenAIProvider(provider_settings)
         return AnthropicProvider(provider_settings)
 
@@ -485,6 +485,7 @@ class OpenAgentRuntime:
             raise ValueError(f"Model '{normalized_model}' is not configured for provider '{normalized_provider}'.")
         self.settings.provider = ProviderSettings(
             name=profile.name,
+            provider_type=profile.provider_type,
             model=normalized_model,
             api_key=profile.api_key,
             base_url=profile.base_url,

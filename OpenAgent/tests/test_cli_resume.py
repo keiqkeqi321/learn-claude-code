@@ -40,6 +40,12 @@ class CliResumeTests(unittest.TestCase):
         self.assertEqual(args.model, "gpt-4.1")
         self.assertEqual(args.command, "doctor")
 
+    def test_parser_accepts_custom_provider_profile_name(self) -> None:
+        args = build_parser().parse_args(["--provider", "openrouter", "--model", "stepfun/step-3.5-flash"])
+
+        self.assertEqual(args.provider, "openrouter")
+        self.assertEqual(args.model, "stepfun/step-3.5-flash")
+
     def test_cmd_chat_starts_new_session_by_default(self) -> None:
         runtime = SimpleNamespace(
             create_session=lambda: SimpleNamespace(id="new-session", messages=[]),

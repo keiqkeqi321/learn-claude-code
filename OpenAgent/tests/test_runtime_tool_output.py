@@ -240,10 +240,11 @@ class RuntimeToolOutputTests(unittest.TestCase):
         runtime.settings = SimpleNamespace(
             workspace_root=Path("D:/workspace"),
             raw_config={"providers": {}},
-            provider=ProviderSettings(name="anthropic", model="glm-5", max_tokens=8000),
+            provider=ProviderSettings(name="anthropic", provider_type="anthropic", model="glm-5", max_tokens=8000),
             provider_profiles={
                 "openai": ProviderProfileSettings(
                     name="openai",
+                    provider_type="openai",
                     models=["gpt-4.1", "gpt-4.1-mini"],
                     default_model="gpt-4.1",
                     api_key="",
@@ -266,12 +267,34 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("gpt-4.1-mini", message)
         self.assertIn("saved it to openagent.toml", message)
         self.assertEqual(runtime.settings.provider.name, "openai")
+        self.assertEqual(runtime.settings.provider.provider_type, "openai")
         self.assertEqual(runtime.settings.provider.model, "gpt-4.1-mini")
         self.assertEqual(runtime.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
         self.assertEqual(runtime.compact_manager.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
         self.assertEqual(runtime.compact_manager.model_max_tokens, 4096)
         self.assertEqual(runtime.settings.provider_profiles["openai"].default_model, "gpt-4.1-mini")
         mock_persist.assert_called_once_with(runtime.settings, "openai", "gpt-4.1-mini")
+
+    def test_instantiate_provider_uses_provider_type_instead_of_profile_name(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+
+        with patch("openagent.runtime.agent.OpenAIProvider", return_value="openai-adapter") as mock_openai, patch(
+            "openagent.runtime.agent.AnthropicProvider", return_value="anthropic-adapter"
+        ) as mock_anthropic:
+            provider = OpenAgentRuntime._instantiate_provider(
+                runtime,
+                ProviderSettings(
+                    name="openrouter",
+                    provider_type="openai",
+                    model="stepfun/step-3.5-flash",
+                    api_key="sk-test",
+                    base_url="https://openrouter.ai/api/v1",
+                ),
+            )
+
+        self.assertEqual(provider, "openai-adapter")
+        mock_openai.assert_called_once()
+        mock_anthropic.assert_not_called()
 
     def test_undo_last_turn_restores_previous_file_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -9,7 +9,6 @@ from openagent.runtime.agent import OpenAgentRuntime
 def _add_provider_overrides(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--provider",
-        choices=("anthropic", "openai"),
         default=argparse.SUPPRESS,
         help="Override the configured provider for this invocation.",
     )
