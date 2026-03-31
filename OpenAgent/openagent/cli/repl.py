@@ -219,6 +219,17 @@ class TurnQueueRunner:
             return prompt_line
         return [*fragments, *prompt_line]
 
+    def current_model_label(self) -> str:
+        provider = getattr(self.runtime.settings, "provider", None)
+        if provider is None:
+            return "model: unknown"
+        provider_name = getattr(provider, "name", "unknown")
+        model_name = getattr(provider, "model", "unknown")
+        return f"model: {provider_name} / {model_name}"
+
+    def bottom_toolbar(self):
+        return [("fg:#94a3b8", self.current_model_label())]
+
     def _status_line(self) -> str:
         with self._lock:
             status = self._status
@@ -335,12 +346,16 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
         while True:
             try:
                 if prompt_session is not None:
-                    query = prompt_session.prompt(runner.prompt_message, refresh_interval=0.1)
+                    query = prompt_session.prompt(
+                        runner.prompt_message,
+                        refresh_interval=0.1,
+                        bottom_toolbar=runner.bottom_toolbar,
+                    )
                 else:
                     if sys.stdout.isatty():
-                        query = input(fallback_prompt_message())
+                        query = input(f"{fallback_prompt_message()}\n{runner.current_model_label()}\n")
                     else:
-                        query = input(PROMPT_TEXT)
+                        query = input(f"{PROMPT_TEXT}\n{runner.current_model_label()}\n")
             except (EOFError, KeyboardInterrupt):
                 print()
                 active, queued = runner.stats()

@@ -12,6 +12,12 @@ def _render_prompt_text(fragments) -> str:
 
 
 class ReplTodoTests(unittest.TestCase):
+    def test_current_model_label_uses_active_provider_and_model(self) -> None:
+        runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+
+        self.assertEqual(runner.current_model_label(), "model: anthropic / glm-5")
+
     def test_prompt_message_shows_open_todos_between_status_and_prompt(self) -> None:
         session = SimpleNamespace(
             todo_items=[
