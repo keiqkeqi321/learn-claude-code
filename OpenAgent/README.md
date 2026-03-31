@@ -1,10 +1,10 @@
 # OpenAgent
 
-OpenAgent is a modular AI agent CLI that ports the full feature set of `agents/s_full.py` into a reusable project layout. It keeps the original loop-and-tools interaction model while adding clearer layering for providers, storage, MCP integration, and teammate orchestration.
+OpenAgent is a modular AI agent CLI that ports the feature set of `agents/s_full.py` into a reusable project layout. It keeps the original loop-and-tools interaction model while adding clearer layering for providers, storage, MCP integration, and teammate orchestration.
 
 ## Included in this MVP
 
-- Interactive CLI with `chat`, `run`, `tasks`, `compact`, and `doctor`
+- Interactive CLI with chat, run, tasks, compact, and doctor flows
 - Single-agent loop with tool dispatch
 - Filesystem and shell tools with workspace boundaries
 - Session-scoped `TodoWrite`
@@ -15,7 +15,7 @@ OpenAgent is a modular AI agent CLI that ports the full feature set of `agents/s
 - Background shell jobs with notifications
 - Message bus, inbox, teammate runtime, shutdown requests, and plan approvals
 - Anthropic provider and OpenAI-compatible provider adapters
-- MCP client integration over `stdio`
+- MCP client integration over `stdio` and HTTP
 - Persistent sessions, transcripts, inbox, team state, and jobs under `.openagent/`
 
 ## Layout
@@ -56,25 +56,43 @@ cp OpenAgent/openagent.toml.example openagent.toml
 3. Run a doctor check:
 
 ```bash
-python -m openagent --workspace . doctor
+python -m openagent doctor
 ```
 
-4. Start chat mode:
+4. Start interactive chat:
 
 ```bash
-python -m openagent --workspace . chat
+python -m openagent
 ```
 
-Or install the console entrypoint and use:
+You can also resume a previous session through the picker:
 
 ```bash
-openagent --workspace . chat
+python -m openagent -r
+```
+
+If you install the console entrypoint, the same commands work as:
+
+```bash
+openagent
+openagent -r
 ```
 
 ## Configuration
 
-Environment variables:
+OpenAgent reads configuration from:
 
+1. `.env` in the workspace root
+2. process environment variables
+3. `openagent.toml` in the workspace root
+
+`openagent.toml` is optional. Missing values fall back to defaults from `openagent/config/settings.py`.
+
+### Environment Variables
+
+Provider-related environment variables:
+
+- `OPENAGENT_PROVIDER`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_BASE_URL`
 - `MODEL_ID`
@@ -83,16 +101,41 @@ Environment variables:
 - `OPENAI_MODEL`
 - `OPENAI_ORG`
 
-Optional `openagent.toml`:
+### openagent.toml
+
+Supported top-level sections:
+
+- `[agent]`
+- `[provider]`
+- `[runtime]`
+- `[[mcp_servers]]` or `[mcp_servers.<name>]`
+
+Example:
 
 ```toml
 [agent]
 name = "OpenAgent"
-system_prompt = """你是一个专业的AI助手..."""  # 可选，自定义系统提示词
+# Optional: fully override the built-in base system prompt.
+# system_prompt = """
+# You are a careful coding agent.
+# """
 
 [provider]
-name = "openai"
-model = "gpt-4.1"
+name = "anthropic" # or "openai"
+model = "claude-sonnet-4-5"
+# base_url = "https://api.anthropic.com"
+# max_tokens = 8000
+# timeout_seconds = 120
+
+[runtime]
+token_threshold = 100000
+command_timeout_seconds = 120
+background_poll_interval_seconds = 2
+teammate_idle_timeout_seconds = 60
+teammate_poll_interval_seconds = 5
+max_tool_output_chars = 50000
+max_subagent_rounds = 30
+max_agent_rounds = 50
 
 [[mcp_servers]]
 name = "filesystem"
@@ -100,91 +143,97 @@ transport = "stdio"
 command = "python"
 args = ["server.py"]
 cwd = "D:/tools/mcp-filesystem"
-enabled = true
+enabled = false
+timeout_seconds = 30
+protocol_version = "2025-11-25"
 
 [mcp_servers.unityMCP]
 transport = "http"
-url = "http://192.168.3.161:8081/mcp"
+url = "http://127.0.0.1:8081/mcp"
 http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
 startup_timeout_sec = 20
-enabled = true
+enabled = false
 ```
 
-### 配置系统提示词
+### Agent Prompt Configuration
 
-OpenAgent 支持两种方式配置系统提示词：
-
-#### 1. 使用默认模板（仅配置名称）
-
-如果只配置 `agent.name`，系统会使用内置的默认提示词模板：
+If you set only `agent.name`, OpenAgent uses the built-in default base prompt and injects the configured name into it.
 
 ```toml
 [agent]
 name = "MyAgent"
 ```
 
-默认模板会自动将 `{name}` 替换为你配置的名称，生成如下提示词：
-
-```
-You are MyAgent, a top-rated AI assistant.
-You are exceptionally strong at coding tasks, software design, debugging, implementation, and complex reasoning.
-You solve problems with clear, defensible thinking, strong technical judgment, and careful tool use.
-Be precise, pragmatic, and direct. Prefer concrete actions over vague advice.
-When needed, inspect the workspace and use tools to verify assumptions before acting.
-```
-
-#### 2. 完全自定义系统提示词
-
-通过 `system_prompt` 字段可以完全覆盖默认提示词：
+If you set `agent.system_prompt`, that string replaces the built-in base prompt.
 
 ```toml
 [agent]
 name = "CodeReviewer"
-system_prompt = """你是一个专业的代码审查专家。
-
-你的职责：
-- 审查代码质量和安全性
-- 提供改进建议
-- 确保代码符合最佳实践
-
-请始终保持专业和友好的态度。"""
-```
-
-运行时会根据角色添加额外信息：
-- **Lead Agent**: 会添加工具使用指南、技能列表、工作空间路径等信息
-- **Worker Agent**: 会添加协作协议、消息通信、空闲循环等信息
-
-#### 3. 多行提示词配置
-
-对于较长的系统提示词，可以使用 TOML 的多行字符串语法：
-
-```toml
-[agent]
-name = "OpenAgent"
-system_prompt = '''
-你是一个专业的AI编程助手。
-
-核心能力：
-1. 代码编写与调试
-2. 软件架构设计
-3. 问题分析与解决
-
-工作原则：
-- 代码优先，避免空谈
-- 注重可读性和可维护性
-- 遵循项目既有规范
-'''
-```
-
-或使用字面量字符串（保留换行）：
-
-```toml
-[agent]
-name = "OpenAgent"
 system_prompt = """
-第一行内容
-第二行内容
+You are a code review specialist.
+Prioritize correctness, regressions, and missing tests.
 """
+```
+
+At runtime, OpenAgent also appends role-specific guidance to the base prompt, including:
+
+- current workspace path
+- available skills
+- tool usage guidance
+- current execution environment
+
+The execution environment block tells the model which OS it is running on and how to use the `bash` tool correctly:
+
+- on Unix-like systems, `bash` uses the system shell
+- on Windows, `bash` runs PowerShell-compatible commands
+
+That means Windows sessions should prefer commands such as:
+
+- `Get-ChildItem`
+- `Get-Content`
+- `Select-String`
+- `Select-Object`
+
+### MCP Server Configuration
+
+OpenAgent supports both styles below.
+
+Array style:
+
+```toml
+[[mcp_servers]]
+name = "filesystem"
+transport = "stdio"
+command = "python"
+args = ["server.py"]
+cwd = "D:/tools/mcp-filesystem"
+enabled = true
+```
+
+Named table style:
+
+```toml
+[mcp_servers.unityMCP]
+transport = "http"
+url = "http://127.0.0.1:8081/mcp"
+http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
+startup_timeout_sec = 20
+enabled = true
+```
+
+Supported MCP fields include:
+
+- `transport`
+- `url`
+- `command`
+- `args`
+- `cwd`
+- `env`
+- `http_headers`
+- `enabled`
+- `timeout_seconds` or `request_timeout_sec`
+- `startup_timeout_sec`
+- `protocol_version`
 
 ## REPL Commands
 
@@ -193,6 +242,7 @@ system_prompt = """
 - `/team`
 - `/inbox`
 - `/mcp`
+- `/toollog`
 - `/bg`
 - `/help`
 - `/exit`

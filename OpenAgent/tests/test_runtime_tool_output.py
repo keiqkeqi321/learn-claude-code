@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -23,6 +24,21 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         self.assertEqual(log_id, "todo-log")
         self.assertEqual(fake_stdout.getvalue(), "")
+
+    def test_build_system_prompt_includes_environment_guidance(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(
+            workspace_root=Path("D:/workspace"),
+            agent=SimpleNamespace(system_prompt=None, name="OpenAgent"),
+        )
+        runtime.skill_loader = SimpleNamespace(descriptions=lambda: "none")
+
+        prompt = OpenAgentRuntime.build_system_prompt(runtime)
+
+        self.assertIn("Execution environment:", prompt)
+        self.assertIn("Tool behavior:", prompt)
+        self.assertIn("Workspace:", prompt)
+        self.assertIn("bash", prompt)
 
 
 if __name__ == "__main__":
