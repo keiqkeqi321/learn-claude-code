@@ -96,6 +96,7 @@ def write_file(ctx: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "action": "write_file",
         "path": payload["path"],
         "absolute_path": str(path),
+        "existed_before": existed_before,
         "added_lines": added,
         "removed_lines": removed,
         "bytes_written": len(content),

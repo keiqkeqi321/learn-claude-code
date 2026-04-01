@@ -44,26 +44,22 @@ class RuntimeToolOutputTests(unittest.TestCase):
                 runtime,
                 "lead",
                 "edit_file",
-                {"path": "openagent/config/settings.py"},
+                {"path": "openagent/config/settings.py", "old_text": "a\n", "new_text": "a\nb\n"},
                 {
                     "status": "ok",
                     "path": "openagent/config/settings.py",
                     "absolute_path": "D:/workspace/openagent/config/settings.py",
-                    "added_lines": 67,
+                    "added_lines": 1,
                     "removed_lines": 0,
                 },
             )
 
         rendered = fake_stdout.getvalue()
         self.assertEqual(log_id, "edit-log")
-        self.assertIn("● edit_file", rendered)
-        self.assertIn("View by: /toollog edit-log", rendered)
-        self.assertIn("openagent/config/settings.py +67 -0", rendered)
-        self.assertLess(rendered.index("● edit_file"), rendered.index("View by: /toollog edit-log"))
-        self.assertLess(
-            rendered.index("View by: /toollog edit-log"),
-            rendered.index("openagent/config/settings.py +67 -0"),
-        )
+        self.assertIn("Update(openagent/config/settings.py)", rendered)
+        self.assertIn("Added 1 lines", rendered)
+        self.assertIn("@@ -1 +1,2 @@", rendered)
+        self.assertIn("+b", rendered)
         self.assertNotIn("TOOL lead", rendered)
 
     def test_failed_tool_event_uses_red_dot_style_without_box_frame(self) -> None:
@@ -87,8 +83,64 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         rendered = fake_stdout.getvalue()
         self.assertEqual(log_id, "tool-log")
-        self.assertIn("● bash", rendered)
+        self.assertIn("Bash(git status)", rendered)
+        self.assertIn("error: command failed", rendered)
         self.assertNotIn("TOOL lead", rendered)
+
+    def test_bash_tool_event_uses_compact_heading_and_result_preview(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.tool_log_store = SimpleNamespace(write=lambda **kwargs: {"id": "bash-log"})
+        runtime._supports_ansi_output = lambda: False
+
+        class _Stdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdout = _Stdout()
+        with patch("sys.stdout", fake_stdout):
+            log_id = OpenAgentRuntime.print_tool_event(
+                runtime,
+                "lead",
+                "bash",
+                {
+                    "command": 'cd "D:\\Project\\Git\\learn-claude-code-new\\OpenAgent" && python -c "print(\\\'All files compile OK\\\')"',
+                },
+                "All files compile OK",
+            )
+
+        rendered = fake_stdout.getvalue()
+        self.assertEqual(log_id, "bash-log")
+        self.assertIn('Bash(cd "D:\\Project\\Git\\learn-claude-code-new\\OpenAgent" && python -c', rendered)
+        self.assertIn("All files compile OK", rendered)
+
+    def test_long_bash_result_is_truncated_and_shows_toollog_hint(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.tool_log_store = SimpleNamespace(
+            write=lambda **kwargs: {"id": "bash-long"},
+            root=Path("D:/workspace/.openagent/logs/tool_logs"),
+        )
+        runtime._supports_ansi_output = lambda: False
+        runtime.settings = SimpleNamespace(workspace_root=Path("D:/workspace"))
+
+        class _Stdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdout = _Stdout()
+        long_output = "0123456789" * 10
+        with patch("sys.stdout", fake_stdout):
+            OpenAgentRuntime.print_tool_event(
+                runtime,
+                "lead",
+                "bash",
+                {"command": "python -c \"print('x')\""},
+                long_output,
+            )
+
+        rendered = fake_stdout.getvalue()
+        self.assertIn("Log: .openagent/logs/tool_logs/bash-long.json", rendered)
+        self.assertIn("...", rendered)
+        self.assertNotIn(long_output, rendered)
 
     def test_print_last_turn_file_summary_shows_undo_hint(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

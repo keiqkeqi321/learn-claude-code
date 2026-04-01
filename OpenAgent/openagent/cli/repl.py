@@ -50,34 +50,96 @@ READ_ONLY_COMMAND_PREFIXES = (
 AUTHORIZATION_PROMPT_SENTINEL = "__openagent_authorization__"
 
 
-def _print_resumed_history(session) -> None:
-    visible_messages: list[tuple[str, str]] = []
-    for message in session.messages:
+def _assistant_tool_calls(content: object) -> list[dict[str, object]]:
+    if not isinstance(content, list):
+        return []
+    calls: list[dict[str, object]] = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "tool_call":
+            calls.append(item)
+    return calls
+
+
+def _tool_result_map(content: object) -> dict[str, object]:
+    if not isinstance(content, list):
+        return {}
+    results: dict[str, object] = {}
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "tool_result":
+            results[str(item.get("tool_call_id", ""))] = item
+    return results
+
+
+def _print_resumed_tool_call(runtime, tool_name: str, payload: dict[str, object], result_payload: object) -> None:
+    if isinstance(result_payload, dict):
+        output = result_payload.get("raw_output", result_payload.get("content", "(no output)"))
+        log_id = str(result_payload.get("log_id", "")).strip() or None
+    else:
+        output = result_payload
+        log_id = None
+    print()
+    for line in runtime.render_tool_event_lines(tool_name, payload, output, log_id=log_id):
+        print(line)
+    print()
+
+
+def _print_resumed_history(session, runtime=None) -> None:
+    printed_any = False
+    header_printed = False
+    index = 0
+    messages = list(getattr(session, "messages", []) or [])
+    while index < len(messages):
+        message = messages[index]
         role = message.get("role")
         content = message.get("content")
         if role == "user":
-            if not isinstance(content, str):
-                continue
-            if content.startswith("<background-results>") or content.startswith("<inbox>"):
-                continue
-            visible_messages.append(("user", content))
+            if isinstance(content, str):
+                if content.startswith("<background-results>") or content.startswith("<inbox>"):
+                    index += 1
+                    continue
+                if not header_printed:
+                    print("[resumed history]")
+                    header_printed = True
+                print_user_message(content)
+                printed_any = True
+            index += 1
             continue
         if role == "assistant":
             text = render_message_content(content, ansi=sys.stdout.isatty()).strip()
-            if not text:
-                continue
-            visible_messages.append(("assistant", text))
-    if not visible_messages:
+            if text:
+                if not header_printed:
+                    print("[resumed history]")
+                    header_printed = True
+                print()
+                print(_prefix_first_line(text, _assistant_prefix(ansi=sys.stdout.isatty())))
+                print()
+                printed_any = True
+            tool_calls = _assistant_tool_calls(content)
+            tool_results = {}
+            if index + 1 < len(messages):
+                next_message = messages[index + 1]
+                if next_message.get("role") == "user":
+                    tool_results = _tool_result_map(next_message.get("content"))
+                    if tool_results:
+                        index += 1
+            for tool_call in tool_calls:
+                if not header_printed:
+                    print("[resumed history]")
+                    header_printed = True
+                tool_runtime = runtime or getattr(getattr(session, "runtime", None), "runtime", None)
+                if tool_runtime is None:
+                    index += 1
+                    continue
+                _print_resumed_tool_call(
+                    tool_runtime,
+                    str(tool_call.get("name", "")),
+                    dict(tool_call.get("input", {}) or {}),
+                    tool_results.get(str(tool_call.get("id", "")), "(no output)"),
+                )
+                printed_any = True
+        index += 1
+    if not printed_any:
         print("[resumed session has no visible chat history]")
-        return
-    print("[resumed history]")
-    for role, text in visible_messages:
-        if role == "user":
-            print_user_message(text)
-            continue
-        print()
-        print(_prefix_first_line(text, _assistant_prefix(ansi=sys.stdout.isatty())))
-        print()
 
 
 @dataclass(slots=True)
