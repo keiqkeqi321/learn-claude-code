@@ -17,7 +17,7 @@ Parent agent                     Subagent
 +------------------+             +------------------+
 | messages=[...]   |             | messages=[]      | <-- fresh
 |                  |  dispatch   |                  |
-| tool: task       | ----------> | while tool_use:  |
+| tool: subagent   | ----------> | while tool_use:  |
 |   prompt="..."   |             |   call tools     |
 |                  |  summary    |   append results |
 |   result = "..." | <---------- | return last text |
@@ -28,11 +28,11 @@ Parent context stays clean. Subagent context is discarded.
 
 ## 工作原理
 
-1. 父智能体有一个 `task` 工具。子智能体拥有除 `task` 外的所有基础工具 (禁止递归生成)。
+1. 父智能体有一个 `subagent` 工具。子智能体拥有除 `subagent` 外的所有基础工具 (禁止递归生成)。
 
 ```python
 PARENT_TOOLS = CHILD_TOOLS + [
-    {"name": "task",
+    {"name": "subagent",
      "description": "Spawn a subagent with fresh context.",
      "input_schema": {
          "type": "object",
@@ -77,7 +77,7 @@ def run_subagent(prompt: str) -> str:
 
 | 组件           | 之前 (s03)       | 之后 (s04)                    |
 |----------------|------------------|-------------------------------|
-| Tools          | 5                | 5 (基础) + task (仅父端)      |
+| Tools          | 5                | 5 (基础) + subagent (仅父端)  |
 | 上下文         | 单一共享         | 父 + 子隔离                   |
 | Subagent       | 无               | `run_subagent()` 函数         |
 | 返回值         | 不适用           | 仅摘要文本                    |
@@ -91,6 +91,6 @@ python agents/s04_subagent.py
 
 试试这些 prompt (英文 prompt 对 LLM 效果更好, 也可以用中文):
 
-1. `Use a subtask to find what testing framework this project uses`
+1. `Use a subagent to find what testing framework this project uses`
 2. `Delegate: read all .py files and summarize what each one does`
-3. `Use a task to create a new module, then verify it from here`
+3. `Use a subagent to create a new module, then verify it from here`

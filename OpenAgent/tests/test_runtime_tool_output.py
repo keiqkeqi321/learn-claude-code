@@ -202,6 +202,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("Current mode: ⏸ plan mode on.", prompt)
         self.assertIn("Return a concrete implementation plan", prompt)
         self.assertIn("request_mode_switch", prompt)
+        self.assertIn("Use subagent for isolated subagent work.", prompt)
         self.assertIn("Do not claim to be Claude", prompt)
 
     def test_authorize_tool_call_blocks_non_edit_tools_in_accept_edits_mode(self) -> None:

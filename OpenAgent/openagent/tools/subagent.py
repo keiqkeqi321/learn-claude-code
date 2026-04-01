@@ -11,7 +11,7 @@ def register_subagent_tool(registry) -> None:
 
     registry.register(
         ToolDefinition(
-            name="task",
+            name="subagent",
             description="Spawn an isolated subagent for exploration or implementation.",
             input_schema={
                 "type": "object",

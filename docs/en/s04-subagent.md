@@ -17,7 +17,7 @@ Parent agent                     Subagent
 +------------------+             +------------------+
 | messages=[...]   |             | messages=[]      | <-- fresh
 |                  |  dispatch   |                  |
-| tool: task       | ----------> | while tool_use:  |
+| tool: subagent   | ----------> | while tool_use:  |
 |   prompt="..."   |             |   call tools     |
 |                  |  summary    |   append results |
 |   result = "..." | <---------- | return last text |
@@ -28,11 +28,11 @@ Parent context stays clean. Subagent context is discarded.
 
 ## How It Works
 
-1. The parent gets a `task` tool. The child gets all base tools except `task` (no recursive spawning).
+1. The parent gets a `subagent` tool. The child gets all base tools except `subagent` (no recursive spawning).
 
 ```python
 PARENT_TOOLS = CHILD_TOOLS + [
-    {"name": "task",
+    {"name": "subagent",
      "description": "Spawn a subagent with fresh context.",
      "input_schema": {
          "type": "object",
@@ -77,7 +77,7 @@ The child's entire message history (possibly 30+ tool calls) is discarded. The p
 
 | Component      | Before (s03)     | After (s04)               |
 |----------------|------------------|---------------------------|
-| Tools          | 5                | 5 (base) + task (parent)  |
+| Tools          | 5                | 5 (base) + subagent (parent)  |
 | Context        | Single shared    | Parent + child isolation  |
 | Subagent       | None             | `run_subagent()` function |
 | Return value   | N/A              | Summary text only         |
@@ -89,6 +89,7 @@ cd learn-claude-code
 python agents/s04_subagent.py
 ```
 
-1. `Use a subtask to find what testing framework this project uses`
+1. `Use a subagent to find what testing framework this project uses`
 2. `Delegate: read all .py files and summarize what each one does`
-3. `Use a task to create a new module, then verify it from here`
+3. `Use a subagent to create a new module, then verify it from here`
+

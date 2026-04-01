@@ -889,7 +889,7 @@ class OpenAgentRuntime:
                 f"{base_prompt}\n\n"
                 f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
                 "Use tools to solve coding tasks. Prefer task_create/task_update/task_list for longer work.\n"
-                "Use TodoWrite for short checklists. Use task for isolated subagent work. Use load_skill only when needed.\n"
+                "Use TodoWrite for short checklists. Use subagent for isolated subagent work. Use load_skill only when needed.\n"
                 "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
                 f"{identity_guidance}\n"
                 f"{mode_guidance}\n"
