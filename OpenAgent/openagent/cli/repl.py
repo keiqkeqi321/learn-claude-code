@@ -344,15 +344,16 @@ class TurnQueueRunner:
         todo_lines = self._todo_lines()
         queue_lines = self._queue_preview_lines()
         fragments = []
-        fragments.extend([("fg:#64748b", PROMPT_BORDER), ("", "\n")])
+        panel_prefix = ("fg:#64748b", "│ ")
         if self.stable_prompt and status_line:
-            style = "fg:#22c55e" if status_line == self.DONE_TEXT else "fg:#eab308"
-            fragments.extend([(style, status_line), ("", "\n")])
+            style = "fg:#9fb8ab" if status_line == self.DONE_TEXT else "fg:#eab308"
+            fragments.extend([panel_prefix, (style, status_line), ("", "\n")])
         if self.stable_prompt:
             for style, line in todo_lines:
-                fragments.extend([(style, line), ("", "\n")])
+                fragments.extend([panel_prefix, (style, line), ("", "\n")])
             for index, queue_line in enumerate(queue_lines, start=1):
-                fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
+                fragments.extend([panel_prefix, ("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
+        fragments.append(panel_prefix)
         fragments.extend([*mode_line, ("", "\n")])
         fragments.extend([("fg:#64748b", PROMPT_BORDER), ("", "\n")])
         fragments.extend(prompt_line)

@@ -50,15 +50,15 @@ class ReplTodoTests(unittest.TestCase):
 
         rendered = _render_prompt_text(runner.prompt_message())
 
-        self.assertTrue(rendered.startswith(f"{PROMPT_BORDER}\n"))
+        self.assertTrue(rendered.startswith("│ "))
         self.assertIn(f"\n{PROMPT_BORDER}\n❯ ", rendered)
         self.assertIn("todo (1/3 completed)", rendered)
         self.assertIn("accept edits on  (Shift+Tab to cycle)", rendered)
         self.assertIn("Refactor module <- Refactoring module", rendered)
         self.assertIn("Add tests", rendered)
         self.assertIn("Run checks", rendered)
-        self.assertLess(rendered.index(PROMPT_BORDER), rendered.index("Loading genius"))
-        self.assertLess(rendered.index("Loading genius"), rendered.index("todo (1/3 completed)"))
+        self.assertNotIn(f"{PROMPT_BORDER}\n│ Loading genius", rendered)
+        self.assertLess(rendered.index("│ Loading genius"), rendered.index("│ todo (1/3 completed)"))
         self.assertLess(rendered.index("todo (1/3 completed)"), rendered.index("accept edits on  (Shift+Tab to cycle)"))
         self.assertLess(rendered.index("accept edits on  (Shift+Tab to cycle)"), rendered.rindex(PROMPT_BORDER))
         self.assertLess(rendered.rindex(PROMPT_BORDER), rendered.index("❯ "))
@@ -76,7 +76,7 @@ class ReplTodoTests(unittest.TestCase):
         rendered = _render_prompt_text(runner.prompt_message())
 
         self.assertNotIn("todo (", rendered)
-        self.assertEqual(rendered, f"{PROMPT_BORDER}\n⏵⏵ accept edits on  (Shift+Tab to cycle)\n{PROMPT_BORDER}\n❯ ")
+        self.assertEqual(rendered, f"│ ⏵⏵ accept edits on  (Shift+Tab to cycle)\n{PROMPT_BORDER}\n❯ ")
 
     def test_prompt_message_omits_cancelled_items_from_visible_todo_block(self) -> None:
         session = SimpleNamespace(
