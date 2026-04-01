@@ -67,6 +67,7 @@ class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
     SILENT_TOOL_NAMES = {"TodoWrite"}
     MAX_UNDO_TURNS = 10
+    TURN_BOUNDARY_TOOL_NAMES = {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}
     _ansi_output_enabled: bool | None = None
     DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
         "You are {name}, a top-rated AI assistant.\n"
@@ -861,18 +862,20 @@ class OpenAgentRuntime:
                 )
                 self._raise_if_interrupted(should_interrupt)
                 session.latest_turn_id = uuid.uuid4().hex[:8]
-                assistant_message = turn.as_message()
-                session.messages.append(assistant_message)
-                self.transcript_store.append(session.id, assistant_message)
                 if not turn.has_tool_calls():
+                    assistant_message = turn.as_message()
+                    session.messages.append(assistant_message)
+                    self.transcript_store.append(session.id, assistant_message)
                     final_text = "\n\n".join(turn.text_blocks).strip()
                     self._capture_turn_file_changes(session)
                     self.session_manager.save(session)
                     return final_text
 
                 tool_results: list[dict[str, Any]] = []
+                executed_tool_calls = []
                 used_todo = False
                 manual_compact = False
+                end_turn_after_tool = False
                 for tool_call in turn.tool_calls:
                     self._raise_if_interrupted(should_interrupt)
                     ctx = ToolExecutionContext(
@@ -888,6 +891,7 @@ class OpenAgentRuntime:
                     except Exception as exc:
                         output = f"Error: {exc}"
                     self.print_tool_event("lead", tool_call.name, tool_call.input, output)
+                    executed_tool_calls.append(tool_call)
                     result = {
                         "type": "tool_result",
                         "tool_call_id": tool_call.id,
@@ -905,7 +909,13 @@ class OpenAgentRuntime:
                     )
                     if tool_call.name == "TodoWrite":
                         used_todo = True
+                    if tool_call.name in self.TURN_BOUNDARY_TOOL_NAMES:
+                        end_turn_after_tool = True
+                        break
 
+                assistant_message = turn.as_message(executed_tool_calls)
+                session.messages.append(assistant_message)
+                self.transcript_store.append(session.id, assistant_message)
                 session.rounds_without_todo = 0 if used_todo else session.rounds_without_todo + 1
                 if self.todo_manager.has_open_items(session) and session.rounds_without_todo >= 3:
                     tool_results.insert(0, {"type": "text", "text": "<reminder>Update your todos.</reminder>"})
@@ -913,6 +923,8 @@ class OpenAgentRuntime:
                 if manual_compact:
                     session.messages = self.compact_manager.auto_compact(session.id, session.messages)
                 self.session_manager.save(session)
+                if end_turn_after_tool:
+                    continue
             self._capture_turn_file_changes(session)
             self.session_manager.save(session)
             return final_text or "Stopped after max rounds."

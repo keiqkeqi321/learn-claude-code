@@ -28,7 +28,7 @@ from openagent.runtime.execution_mode import (
     next_execution_mode,
     normalize_execution_mode,
 )
-from openagent.runtime.messages import render_text_content
+from openagent.runtime.messages import render_markdown_text, render_message_content, render_text_content
 from openagent.tools.todo import TODO_CLOSED_STATUSES, TODO_STATUS_MARKERS, TODO_VISIBLE_STATUSES
 
 try:
@@ -62,7 +62,7 @@ def _print_resumed_history(session) -> None:
             visible_messages.append(("You", content))
             continue
         if role == "assistant":
-            text = render_text_content(content).strip()
+            text = render_message_content(content, ansi=sys.stdout.isatty()).strip()
             if not text:
                 continue
             visible_messages.append(("Assistant", text))
@@ -71,7 +71,8 @@ def _print_resumed_history(session) -> None:
         return
     print("[resumed history]")
     for speaker, text in visible_messages:
-        print(f"{speaker}: {text}")
+        print(f"{speaker}:")
+        print(text)
         print()
 
 
@@ -304,7 +305,7 @@ class TurnQueueRunner:
                     print()
                 elif response:
                     print()
-                    print(response)
+                    print(render_markdown_text(response, ansi=sys.stdout.isatty()))
                     print()
                 self.runtime.print_last_turn_file_summary(self.session)
             except TurnInterrupted:

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from openagent.config.models import ProviderProfileSettings, ProviderSettings
 from openagent.runtime.agent import OpenAgentRuntime, TurnInterrupted
+from openagent.runtime.messages import AssistantTurn, ToolCall
 from openagent.runtime.session import AgentSession
 
 
@@ -345,6 +346,75 @@ class RuntimeToolOutputTests(unittest.TestCase):
             OpenAgentRuntime.complete(runtime, "system", [], [], text_callback=None)
 
         self.assertEqual(attempts, ["called"])
+
+    def test_agent_loop_stops_turn_after_request_authorization_and_replans(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(
+            runtime=SimpleNamespace(max_agent_rounds=4, token_threshold=999999, max_tool_output_chars=5000),
+            provider=SimpleNamespace(max_tokens=1024),
+        )
+        runtime.background_manager = SimpleNamespace(drain=lambda: [])
+        runtime.bus = SimpleNamespace(read_inbox=lambda actor: [])
+        runtime.compact_manager = SimpleNamespace(auto_compact=lambda session_id, messages: messages)
+        runtime.todo_manager = SimpleNamespace(has_open_items=lambda session: False)
+        runtime.session_manager = SimpleNamespace(save=lambda session: None)
+        runtime.transcript_store = SimpleNamespace(append=lambda *args, **kwargs: None)
+        runtime.print_tool_event = lambda *args, **kwargs: None
+        runtime.build_system_prompt = lambda: "system"
+        runtime._capture_turn_file_changes = lambda session: None
+
+        executed_tools: list[str] = []
+
+        class _Registry:
+            def schemas(self):
+                return []
+
+            def execute(self, ctx, name, payload):
+                executed_tools.append(name)
+                if name == "request_authorization":
+                    return '{"status":"approved","scope":"once"}'
+                if name == "bash":
+                    return "git status output"
+                return f"ran {name}"
+
+        turns = iter(
+            [
+                AssistantTurn(
+                    stop_reason="tool_use",
+                    text_blocks=["Need approval first."],
+                    tool_calls=[
+                        ToolCall("call-1", "request_authorization", {"tool_name": "bash", "reason": "inspect repo"}),
+                        ToolCall("call-2", "bash", {"command": "git status"}),
+                    ],
+                ),
+                AssistantTurn(
+                    stop_reason="tool_use",
+                    text_blocks=["Now running the command."],
+                    tool_calls=[ToolCall("call-3", "bash", {"command": "git status"})],
+                ),
+                AssistantTurn(
+                    stop_reason="end_turn",
+                    text_blocks=["Done."],
+                ),
+            ]
+        )
+        runtime.complete = lambda *args, **kwargs: next(turns)
+        runtime.registry = _Registry()
+
+        session = AgentSession(id="session-1")
+
+        result = OpenAgentRuntime.run_turn(runtime, session, "check repo")
+
+        self.assertEqual(result, "Done.")
+        self.assertEqual(executed_tools, ["request_authorization", "bash"])
+        assistant_with_auth = session.messages[1]
+        self.assertEqual(assistant_with_auth["role"], "assistant")
+        self.assertIsInstance(assistant_with_auth["content"], list)
+        tool_calls_after_auth = [item for item in assistant_with_auth["content"] if item.get("type") == "tool_call"]
+        self.assertEqual([item["name"] for item in tool_calls_after_auth], ["request_authorization"])
+        assistant_with_bash = session.messages[3]
+        tool_calls_after_bash = [item for item in assistant_with_bash["content"] if item.get("type") == "tool_call"]
+        self.assertEqual([item["name"] for item in tool_calls_after_bash], ["bash"])
 
 
 if __name__ == "__main__":

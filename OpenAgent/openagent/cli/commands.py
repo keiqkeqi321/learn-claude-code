@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 
 from openagent.runtime.agent import OpenAgentRuntime
-from openagent.runtime.messages import render_text_content
+from openagent.runtime.messages import MarkdownStreamRenderer, render_markdown_text, render_message_content, render_text_content
 from openagent.cli.prompting import choose_session_interactively, format_session_timestamp
 
 
@@ -19,35 +20,33 @@ class ConsoleStreamer:
         self.start_on_new_line = start_on_new_line
         self.line_buffered = line_buffered
         self.on_first_output = on_first_output
-        self._pending = ""
+        self._renderer: MarkdownStreamRenderer | None = None
+        self._started_printing = False
 
     def __call__(self, text: str) -> None:
         if not text:
             return
-        if self.line_buffered:
-            self._pending += text
-            if "\n" not in self._pending:
-                return
-            before, self._pending = self._pending.rsplit("\n", 1)
-            text = before + "\n"
+        if self._renderer is None:
+            self._renderer = MarkdownStreamRenderer(ansi=sys.stdout.isatty())
         if not self.has_output and self.on_first_output is not None:
             self.on_first_output()
-        if self.start_on_new_line and not self.has_output:
-            print()
-        print(text, end="", flush=True)
+        self._print_rendered(self._renderer.feed(text))
         self.has_output = True
 
     def finish(self) -> None:
-        if self.line_buffered and self._pending:
-            if not self.has_output and self.on_first_output is not None:
-                self.on_first_output()
-            if self.start_on_new_line and not self.has_output:
-                print()
-            print(self._pending, end="", flush=True)
-            self.has_output = True
-            self._pending = ""
-        if self.has_output:
+        if not self.has_output:
+            return
+        if self._renderer is None:
+            return
+        self._print_rendered(self._renderer.finish())
+
+    def _print_rendered(self, rendered: str) -> None:
+        if not rendered:
+            return
+        if self.start_on_new_line and not self._started_printing:
             print()
+        print(rendered, end="" if rendered.endswith("\n") else "\n", flush=True)
+        self._started_printing = True
 
 
 @dataclass(slots=True)
@@ -81,7 +80,7 @@ def _session_preview(session) -> str:
         role = message.get("role")
         content = message.get("content")
         if role == "assistant":
-            text = render_text_content(content).strip()
+            text = render_message_content(content, ansi=False).strip()
         elif role == "user" and isinstance(content, str):
             if content.startswith("<background-results>") or content.startswith("<inbox>"):
                 continue
@@ -132,7 +131,7 @@ def cmd_run(runtime: OpenAgentRuntime, prompt: str) -> int:
     if streamer.has_output:
         streamer.finish()
     elif result:
-        print(result)
+        print(render_markdown_text(result, ansi=sys.stdout.isatty()))
     return 0
 
 

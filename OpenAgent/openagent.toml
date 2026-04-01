@@ -12,7 +12,7 @@ default = "anthropic"
 [providers.anthropic]
 provider_type = "anthropic"
 models = ["glm-5", "kimi-k2.5", "qwen3.5-plus"]
-default_model = "glm-5"
+default_model = "qwen3.5-plus"
 api_key = "sk-sp-54e807dab13a42f88021d34da7107e86"
 base_url = "https://coding.dashscope.aliyuncs.com/apps/anthropic"
 
@@ -34,7 +34,7 @@ base_url = "https://openrouter.ai/api/v1"
 provider_type = "anthropic"
 models = ["glm-5.1"]
 default_model = "glm-5.1"
-api_key = "9a52d9ff15ba46168e9a3612747402ef.PdwleczRIxyKBZuP"
+api_key = "22d0f2e9216a4065a08626e9d8bab82e.UXE1nIfMG3ta6rNg"
 base_url = "https://open.bigmodel.cn/api/anthropic"
 
 
