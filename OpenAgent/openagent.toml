@@ -30,6 +30,13 @@ default_model = "step-3.5-flash"
 api_key = "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"
 base_url = "https://openrouter.ai/api/v1"
 
+[providers.glm]
+provider_type = "anthropic"
+models = ["glm-5.1"]
+default_model = "glm-5.1"
+api_key = "9a52d9ff15ba46168e9a3612747402ef.PdwleczRIxyKBZuP"
+base_url = "https://open.bigmodel.cn/api/anthropic"
+
 
 [runtime]
 token_threshold = 100000
