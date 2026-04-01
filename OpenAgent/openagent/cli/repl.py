@@ -126,12 +126,11 @@ def _print_resumed_history(session, runtime=None) -> None:
                 if not header_printed:
                     print("[resumed history]")
                     header_printed = True
-                tool_runtime = runtime or getattr(getattr(session, "runtime", None), "runtime", None)
-                if tool_runtime is None:
+                if runtime is None:
                     index += 1
                     continue
                 _print_resumed_tool_call(
-                    tool_runtime,
+                    runtime,
                     str(tool_call.get("name", "")),
                     dict(tool_call.get("input", {}) or {}),
                     tool_results.get(str(tool_call.get("id", "")), "(no output)"),
@@ -656,7 +655,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
     runner.start()
     print(f"[session {session.id}]")
     if resumed:
-        _print_resumed_history(session)
+        _print_resumed_history(session, runtime)
     prompt_context = patch_stdout(raw=True) if prompt_session is not None and patch_stdout is not None else nullcontext()
     try:
         with prompt_context:

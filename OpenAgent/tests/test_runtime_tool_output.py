@@ -138,7 +138,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
             )
 
         rendered = fake_stdout.getvalue()
-        self.assertIn("Log: .openagent/logs/tool_logs/bash-long.json", rendered)
+        self.assertIn("Log: /toollog bash-long", rendered)
         self.assertIn("...", rendered)
         self.assertNotIn(long_output, rendered)
 

@@ -135,7 +135,33 @@ class CliResumeTests(unittest.TestCase):
         session = SimpleNamespace(
             messages=[
                 {"role": "user", "content": "history question"},
-                {"role": "assistant", "content": [{"type": "text", "text": "# Title\n\n- item"}]},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "# Title\n\n- item"},
+                        {"type": "tool_call", "id": "call-1", "name": "bash", "input": {"command": "git status"}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_call_id": "call-1",
+                            "content": "All clean",
+                            "raw_output": "All clean",
+                            "log_id": "log-1",
+                        },
+                    ],
+                },
+            ]
+        )
+
+        runtime = SimpleNamespace(
+            render_tool_event_lines=lambda tool_name, payload, output, log_id=None: [
+                f"● {tool_name}({payload.get('command', '')})",
+                f"  ⎿  {output if isinstance(output, str) else output.get('message', output)}",
+                f"     Log: /toollog {log_id}" if log_id else "     Log: (none)",
             ]
         )
 
@@ -158,13 +184,16 @@ class CliResumeTests(unittest.TestCase):
 
         fake_stdout = _StdoutCapture()
         with patch("sys.stdout", fake_stdout):
-            _print_resumed_history(session)
+            _print_resumed_history(session, runtime)
 
         rendered = fake_stdout.getvalue()
         self.assertIn("[resumed history]", rendered)
         self.assertIn("❯ history question", rendered)
         self.assertIn("● Title\n=====", rendered)
         self.assertIn("• item", rendered)
+        self.assertIn("● bash(git status)", rendered)
+        self.assertIn("All clean", rendered)
+        self.assertIn("Log: /toollog log-1", rendered)
         self.assertNotIn("You:", rendered)
         self.assertNotIn("Assistant:", rendered)
         self.assertNotIn(PROMPT_BORDER, rendered)
