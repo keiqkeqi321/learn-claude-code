@@ -13,6 +13,7 @@ from openagent.cli.repl import (
     _resolve_authorization_requests,
     _resolve_mode_switch_requests,
 )
+from openagent.tools.todo import TodoManager
 
 
 def _render_prompt_text(fragments) -> str:
@@ -64,6 +65,65 @@ class ReplTodoTests(unittest.TestCase):
 
         self.assertNotIn("todo (", rendered)
         self.assertEqual(rendered, "⏵⏵ accept edits on  (Shift+Tab to cycle)\nopenagent >> ")
+
+    def test_prompt_message_omits_cancelled_items_from_visible_todo_block(self) -> None:
+        session = SimpleNamespace(
+            todo_items=[
+                {"content": "Refactor module", "status": "in_progress", "activeForm": "Refactoring module"},
+                {
+                    "content": "Drop old approach",
+                    "status": "cancelled",
+                    "activeForm": "Dropping old approach",
+                    "cancelledReason": "Superseded by the new approach",
+                },
+                {"content": "Run checks", "status": "completed", "activeForm": "Running checks"},
+            ]
+        )
+        runner = TurnQueueRunner(SimpleNamespace(), session, stable_prompt=True)
+
+        rendered = _render_prompt_text(runner.prompt_message())
+
+        self.assertIn("todo (1/2 completed)", rendered)
+        self.assertIn("Refactor module <- Refactoring module", rendered)
+        self.assertIn("Run checks", rendered)
+        self.assertNotIn("Drop old approach", rendered)
+
+    def test_todo_manager_treats_cancelled_items_as_closed_and_hidden(self) -> None:
+        session = SimpleNamespace(todo_items=[])
+        manager = TodoManager()
+
+        rendered = manager.update(
+            session,
+            [
+                {
+                    "content": "Drop old approach",
+                    "status": "cancelled",
+                    "activeForm": "Dropping old approach",
+                    "cancelledReason": "Superseded by the new approach",
+                }
+            ],
+        )
+
+        self.assertEqual(session.todo_items[0]["status"], "cancelled")
+        self.assertEqual(session.todo_items[0]["cancelledReason"], "Superseded by the new approach")
+        self.assertFalse(manager.has_open_items(session))
+        self.assertEqual(rendered, "No todos.")
+
+    def test_todo_manager_requires_cancelled_reason_for_cancelled_items(self) -> None:
+        session = SimpleNamespace(todo_items=[])
+        manager = TodoManager()
+
+        with self.assertRaisesRegex(ValueError, "cancelledReason required"):
+            manager.update(
+                session,
+                [
+                    {
+                        "content": "Drop old approach",
+                        "status": "cancelled",
+                        "activeForm": "Dropping old approach",
+                    }
+                ],
+            )
 
     def test_cycle_execution_mode_advances_in_danger_order(self) -> None:
         runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))

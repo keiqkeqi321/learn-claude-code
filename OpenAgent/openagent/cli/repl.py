@@ -29,7 +29,7 @@ from openagent.runtime.execution_mode import (
     normalize_execution_mode,
 )
 from openagent.runtime.messages import render_text_content
-from openagent.tools.todo import TODO_STATUS_MARKERS
+from openagent.tools.todo import TODO_CLOSED_STATUSES, TODO_STATUS_MARKERS, TODO_VISIBLE_STATUSES
 
 try:
     from prompt_toolkit.patch_stdout import patch_stdout
@@ -405,10 +405,14 @@ class TurnQueueRunner:
         ]
 
     def _todo_lines(self) -> list[tuple[str, str]]:
-        todo_items = list(getattr(self.session, "todo_items", []) or [])
+        todo_items = [
+            item
+            for item in list(getattr(self.session, "todo_items", []) or [])
+            if str(item.get("status", "pending")).lower() in TODO_VISIBLE_STATUSES
+        ]
         if not todo_items:
             return []
-        if not any(item.get("status") != "completed" for item in todo_items):
+        if not any(str(item.get("status", "pending")).lower() not in TODO_CLOSED_STATUSES for item in todo_items):
             return []
 
         completed = sum(1 for item in todo_items if item.get("status") == "completed")
@@ -417,6 +421,7 @@ class TurnQueueRunner:
             "pending": "fg:#cbd5e1",
             "in_progress": "fg:#fbbf24",
             "completed": "fg:#64748b",
+            "cancelled": "fg:#64748b",
         }
         for item in todo_items:
             status = str(item.get("status", "pending")).lower()
