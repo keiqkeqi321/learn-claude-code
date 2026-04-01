@@ -6,7 +6,47 @@ from dataclasses import dataclass
 
 from openagent.runtime.agent import OpenAgentRuntime
 from openagent.runtime.messages import MarkdownStreamRenderer, render_markdown_text, render_message_content, render_text_content
-from openagent.cli.prompting import choose_session_interactively, format_session_timestamp
+from openagent.cli.prompting import PROMPT_BORDER, choose_session_interactively, format_session_timestamp
+
+
+ASSISTANT_BULLET = "\u25cf"
+USER_BULLET = "\u276f"
+
+
+def _prefix_first_line(text: str, prefix: str) -> str:
+    if not text:
+        return prefix.rstrip()
+    lines = text.splitlines()
+    if not lines:
+        return prefix.rstrip()
+    lines[0] = f"{prefix}{lines[0]}"
+    return "\n".join(lines)
+
+
+def _assistant_prefix(*, ansi: bool) -> str:
+    if ansi:
+        return "\x1b[37m\u25cf\x1b[0m "
+    return f"{ASSISTANT_BULLET} "
+
+
+def _gray_text(text: str, *, ansi: bool) -> str:
+    if ansi:
+        return f"\x1b[38;5;240m{text}\x1b[0m"
+    return text
+
+
+def print_user_message(text: str, *, ansi: bool | None = None, underline: bool = True) -> None:
+    ansi_enabled = sys.stdout.isatty() if ansi is None else ansi
+    lines = text.splitlines() or [""]
+    first = f"{USER_BULLET} {lines[0]}"
+    remainder = [f"  {line}" if line else "  " for line in lines[1:]]
+    print()
+    print(first)
+    for line in remainder:
+        print(line)
+    if underline:
+        print(_gray_text(PROMPT_BORDER, ansi=ansi_enabled))
+    print()
 
 
 class ConsoleStreamer:
@@ -45,6 +85,8 @@ class ConsoleStreamer:
             return
         if self.start_on_new_line and not self._started_printing:
             print()
+        if not self._started_printing:
+            rendered = _prefix_first_line(rendered, _assistant_prefix(ansi=sys.stdout.isatty()))
         print(rendered, end="" if rendered.endswith("\n") else "\n", flush=True)
         self._started_printing = True
 
@@ -131,7 +173,7 @@ def cmd_run(runtime: OpenAgentRuntime, prompt: str) -> int:
     if streamer.has_output:
         streamer.finish()
     elif result:
-        print(render_markdown_text(result, ansi=sys.stdout.isatty()))
+        print(_prefix_first_line(render_markdown_text(result, ansi=sys.stdout.isatty()), _assistant_prefix(ansi=sys.stdout.isatty())))
     return 0
 
 

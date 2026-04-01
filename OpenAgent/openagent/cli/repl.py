@@ -9,9 +9,10 @@ import time
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
-from openagent.cli.commands import ConsoleStreamer
+from openagent.cli.commands import ConsoleStreamer, _assistant_prefix, _prefix_first_line, print_user_message
 from openagent.cli.prompting import (
     COMMAND_SPECS,
+    PROMPT_BORDER,
     PROMPT_TEXT,
     choose_authorization_interactively,
     choose_item_interactively,
@@ -59,20 +60,23 @@ def _print_resumed_history(session) -> None:
                 continue
             if content.startswith("<background-results>") or content.startswith("<inbox>"):
                 continue
-            visible_messages.append(("You", content))
+            visible_messages.append(("user", content))
             continue
         if role == "assistant":
             text = render_message_content(content, ansi=sys.stdout.isatty()).strip()
             if not text:
                 continue
-            visible_messages.append(("Assistant", text))
+            visible_messages.append(("assistant", text))
     if not visible_messages:
         print("[resumed session has no visible chat history]")
         return
     print("[resumed history]")
-    for speaker, text in visible_messages:
-        print(f"{speaker}:")
-        print(text)
+    for role, text in visible_messages:
+        if role == "user":
+            print_user_message(text, underline=False)
+            continue
+        print()
+        print(_prefix_first_line(text, _assistant_prefix(ansi=sys.stdout.isatty())))
         print()
 
 
@@ -285,7 +289,7 @@ class TurnQueueRunner:
                 ]
             self._set_status("thinking")
             if echo_on_start:
-                print(f"{PROMPT_TEXT}{query_text}")
+                print_user_message(query_text)
             streamer = ConsoleStreamer(
                 start_on_new_line=True,
                 line_buffered=self.stable_prompt,
@@ -305,7 +309,12 @@ class TurnQueueRunner:
                     print()
                 elif response:
                     print()
-                    print(render_markdown_text(response, ansi=sys.stdout.isatty()))
+                    print(
+                        _prefix_first_line(
+                            render_markdown_text(response, ansi=sys.stdout.isatty()),
+                            _assistant_prefix(ansi=sys.stdout.isatty()),
+                        )
+                    )
                     print()
                 self.runtime.print_last_turn_file_summary(self.session)
             except TurnInterrupted:
@@ -335,6 +344,7 @@ class TurnQueueRunner:
         todo_lines = self._todo_lines()
         queue_lines = self._queue_preview_lines()
         fragments = []
+        fragments.extend([("fg:#64748b", PROMPT_BORDER), ("", "\n")])
         if self.stable_prompt and status_line:
             style = "fg:#22c55e" if status_line == self.DONE_TEXT else "fg:#eab308"
             fragments.extend([(style, status_line), ("", "\n")])
@@ -348,7 +358,8 @@ class TurnQueueRunner:
         return fragments
 
     def current_model_label(self) -> str:
-        provider = getattr(self.runtime.settings, "provider", None)
+        settings = getattr(self.runtime, "settings", None)
+        provider = getattr(settings, "provider", None)
         if provider is None:
             return "model: unknown"
         provider_name = getattr(provider, "name", "unknown")
@@ -693,7 +704,9 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     continue
                 was_active, queued_before = runner.enqueue(query)
                 if runner.stable_prompt and not was_active and queued_before == 0:
-                    print(f"{PROMPT_TEXT}{query}")
+                    print_user_message(query)
+                if not runner.stable_prompt and not was_active and queued_before == 0:
+                    print_user_message(query)
                 if (was_active or queued_before) and not runner.stable_prompt:
                     ahead = queued_before + (1 if was_active else 0)
                     print(f"[queued; {ahead} item(s) ahead]")

@@ -6,6 +6,7 @@ from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from openagent.cli.prompting import PROMPT_BORDER
 from openagent.cli.repl import (
     TurnQueueRunner,
     _handle_model_command,
@@ -28,6 +29,12 @@ class ReplTodoTests(unittest.TestCase):
         self.assertEqual(runner.current_model_label(), "model: anthropic / glm-5")
         self.assertIn("accept edits on", runner.execution_mode_label())
 
+    def test_bottom_toolbar_shows_model_label(self) -> None:
+        runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="openai", model="gpt-5")))
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+
+        self.assertEqual(runner.bottom_toolbar(), [("fg:#94a3b8", "model: openai / gpt-5")])
+
     def test_prompt_message_shows_open_todos_before_mode_and_prompt(self) -> None:
         session = SimpleNamespace(
             todo_items=[
@@ -43,14 +50,17 @@ class ReplTodoTests(unittest.TestCase):
 
         rendered = _render_prompt_text(runner.prompt_message())
 
+        self.assertTrue(rendered.startswith(f"{PROMPT_BORDER}\n"))
         self.assertIn("todo (1/3 completed)", rendered)
         self.assertIn("accept edits on  (Shift+Tab to cycle)", rendered)
         self.assertIn("Refactor module <- Refactoring module", rendered)
         self.assertIn("Add tests", rendered)
         self.assertIn("Run checks", rendered)
+        self.assertLess(rendered.index(PROMPT_BORDER), rendered.index("Loading genius"))
         self.assertLess(rendered.index("Loading genius"), rendered.index("todo (1/3 completed)"))
         self.assertLess(rendered.index("todo (1/3 completed)"), rendered.index("accept edits on  (Shift+Tab to cycle)"))
-        self.assertLess(rendered.index("accept edits on  (Shift+Tab to cycle)"), rendered.index("openagent >> "))
+        self.assertLess(rendered.index("accept edits on  (Shift+Tab to cycle)"), rendered.index("❯ "))
+        self.assertNotIn("model: unknown", rendered)
 
     def test_prompt_message_hides_todos_when_all_completed(self) -> None:
         session = SimpleNamespace(
@@ -64,7 +74,7 @@ class ReplTodoTests(unittest.TestCase):
         rendered = _render_prompt_text(runner.prompt_message())
 
         self.assertNotIn("todo (", rendered)
-        self.assertEqual(rendered, "⏵⏵ accept edits on  (Shift+Tab to cycle)\nopenagent >> ")
+        self.assertEqual(rendered, f"{PROMPT_BORDER}\n⏵⏵ accept edits on  (Shift+Tab to cycle)\n❯ ")
 
     def test_prompt_message_omits_cancelled_items_from_visible_todo_block(self) -> None:
         session = SimpleNamespace(

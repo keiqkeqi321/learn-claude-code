@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from openagent.cli.commands import _build_session_choices, cmd_chat
 from openagent.cli.main import build_parser
+from openagent.cli.prompting import PROMPT_BORDER
+from openagent.cli.repl import _print_resumed_history
 
 
 class CliResumeTests(unittest.TestCase):
@@ -128,6 +130,44 @@ class CliResumeTests(unittest.TestCase):
         choices = _build_session_choices(runtime)
 
         self.assertEqual([choice.session_id for choice in choices], ["valid"])
+
+    def test_resumed_history_uses_chat_output_styles(self) -> None:
+        session = SimpleNamespace(
+            messages=[
+                {"role": "user", "content": "history question"},
+                {"role": "assistant", "content": [{"type": "text", "text": "# Title\n\n- item"}]},
+            ]
+        )
+
+        class _StdoutCapture:
+            def __init__(self) -> None:
+                self.parts: list[str] = []
+
+            def write(self, text: str) -> int:
+                self.parts.append(text)
+                return len(text)
+
+            def flush(self) -> None:
+                return None
+
+            def isatty(self) -> bool:
+                return False
+
+            def getvalue(self) -> str:
+                return "".join(self.parts)
+
+        fake_stdout = _StdoutCapture()
+        with patch("sys.stdout", fake_stdout):
+            _print_resumed_history(session)
+
+        rendered = fake_stdout.getvalue()
+        self.assertIn("[resumed history]", rendered)
+        self.assertIn("❯ history question", rendered)
+        self.assertIn("● Title\n=====", rendered)
+        self.assertIn("• item", rendered)
+        self.assertNotIn("You:", rendered)
+        self.assertNotIn("Assistant:", rendered)
+        self.assertNotIn(PROMPT_BORDER, rendered)
 
 
 if __name__ == "__main__":

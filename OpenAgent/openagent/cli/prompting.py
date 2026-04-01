@@ -44,14 +44,12 @@ IGNORED_DIR_NAMES = {
 }
 
 TOKEN_PATTERN = re.compile(r"(?:^|\s)([@/])([^\s]*)$")
-PROMPT_TEXT = "openagent >> "
-PROMPT_ANSI = "\x1b[38;5;45mopenagent\x1b[0m \x1b[38;5;244m>>\x1b[0m "
+PROMPT_BORDER = "\u2500" * 58
+PROMPT_TEXT = "\u276f "
+PROMPT_ANSI = "\u276f "
 PROMPT_FORMATTED = FormattedText(
     [
-        ("#00afff bold", "openagent"),
-        ("", " "),
-        ("#808080", ">>"),
-        ("", " "),
+        ("#f8fafc bold", "\u276f "),
     ]
 )
 

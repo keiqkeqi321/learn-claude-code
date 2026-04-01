@@ -162,32 +162,47 @@ class OpenAgentRuntime:
         if self._is_file_change_event(tool_name, output):
             self._print_file_change_event(tool_name, log_entry["id"], output)
             return log_entry["id"]
-        border = f"{'=' * 18} {category} {actor} {'=' * 18}"
-        name_line = f"Name: {tool_name}"
         args_text = self._stringify_tool_value(tool_input)
         result_text = self._stringify_tool_value(output)
         args_preview, args_hidden = self._preview_tool_text(args_text)
         result_preview, result_hidden = self._preview_tool_text(result_text)
         has_hidden_content = args_hidden or result_hidden
         print()
-        self._print_tool_border(border, category)
+        print(self._format_tool_heading(tool_name, output))
         if has_hidden_content:
             print(f"View by: /toollog {log_entry['id']}")
-        print(name_line)
         print("Args:")
         print(args_preview)
         print("Result:")
         print(result_preview)
-        self._print_tool_border("=" * len("================== TOOL lead =================="), category)
         print()
         return log_entry["id"]
 
-    def _print_tool_border(self, text: str, category: str) -> None:
+    def _format_tool_heading(self, tool_name: str, output: Any) -> str:
+        failed = self._tool_event_failed(output)
+        bullet = "\u25cf"
         if self._supports_ansi_output():
-            color = "\x1b[38;5;214m" if category == "MCP" else "\x1b[38;5;111m"
-            print(f"{color}{text}\x1b[0m")
-            return
-        print(text)
+            color = "\x1b[31m" if failed else "\x1b[32m"
+            bullet = f"{color}{bullet}\x1b[0m"
+        return f"{bullet} {tool_name}"
+
+    def _tool_event_failed(self, output: Any) -> bool:
+        if isinstance(output, str):
+            lowered = output.strip().lower()
+            if lowered.startswith("error:") or lowered.startswith("unknown tool:") or lowered.startswith("blocked in "):
+                return True
+            return False
+        if not isinstance(output, dict):
+            return False
+        status = str(output.get("status", "")).strip().lower()
+        if status in {"error", "failed", "denied"}:
+            return True
+        if status in {"ok", "success", "approved"}:
+            return False
+        if "success" in output:
+            return not bool(output.get("success"))
+        error_value = output.get("error")
+        return isinstance(error_value, str) and bool(error_value.strip())
 
     def _is_file_change_event(self, tool_name: str, output: Any) -> bool:
         return tool_name in {"write_file", "edit_file"} and isinstance(output, dict) and "path" in output
@@ -204,7 +219,7 @@ class OpenAgentRuntime:
         if self._supports_ansi_output():
             plus_text = f"\x1b[32m{plus_text}\x1b[0m"
             minus_text = f"\x1b[31m{minus_text}\x1b[0m"
-        print(tool_name)
+        print(self._format_tool_heading(tool_name, output))
         print(f"View by: /toollog {log_id}")
         print(f"{path_text} {plus_text} {minus_text}")
         print()

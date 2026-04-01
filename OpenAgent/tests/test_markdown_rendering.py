@@ -39,7 +39,7 @@ class MarkdownRenderingTests(unittest.TestCase):
             streamer.finish()
 
         rendered = fake_stdout.getvalue()
-        self.assertIn("Title\n=====", rendered)
+        self.assertIn("● Title\n=====", rendered)
         self.assertIn("• item", rendered)
         self.assertNotIn("# Title", rendered)
 
@@ -59,7 +59,7 @@ class MarkdownRenderingTests(unittest.TestCase):
             streamer.finish()
 
         rendered_after_finish = fake_stdout.getvalue()
-        self.assertIn("Title\n=====\n", rendered_during_stream)
+        self.assertIn("● Title\n=====\n", rendered_during_stream)
         self.assertEqual(rendered_during_stream, rendered_before_finish)
         self.assertIn("• item", rendered_after_finish)
 

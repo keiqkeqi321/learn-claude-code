@@ -56,14 +56,38 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         rendered = fake_stdout.getvalue()
         self.assertEqual(log_id, "edit-log")
-        self.assertIn("edit_file", rendered)
+        self.assertIn("● edit_file", rendered)
         self.assertIn("View by: /toollog edit-log", rendered)
         self.assertIn("openagent/config/settings.py +67 -0", rendered)
-        self.assertLess(rendered.index("edit_file"), rendered.index("View by: /toollog edit-log"))
+        self.assertLess(rendered.index("● edit_file"), rendered.index("View by: /toollog edit-log"))
         self.assertLess(
             rendered.index("View by: /toollog edit-log"),
             rendered.index("openagent/config/settings.py +67 -0"),
         )
+        self.assertNotIn("TOOL lead", rendered)
+
+    def test_failed_tool_event_uses_red_dot_style_without_box_frame(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.tool_log_store = SimpleNamespace(write=lambda **kwargs: {"id": "tool-log"})
+        runtime._supports_ansi_output = lambda: False
+
+        class _Stdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdout = _Stdout()
+        with patch("sys.stdout", fake_stdout):
+            log_id = OpenAgentRuntime.print_tool_event(
+                runtime,
+                "lead",
+                "bash",
+                {"command": "git status"},
+                "error: command failed",
+            )
+
+        rendered = fake_stdout.getvalue()
+        self.assertEqual(log_id, "tool-log")
+        self.assertIn("● bash", rendered)
         self.assertNotIn("TOOL lead", rendered)
 
     def test_print_last_turn_file_summary_shows_undo_hint(self) -> None:
