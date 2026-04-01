@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from openagent.cli.commands import _build_session_choices, cmd_chat
+from openagent.cli.commands import _build_session_choices, cmd_chat, print_user_message
 from openagent.cli.main import build_parser
 from openagent.cli.prompting import PROMPT_BORDER
 from openagent.cli.repl import _print_resumed_history
@@ -167,6 +167,32 @@ class CliResumeTests(unittest.TestCase):
         self.assertIn("• item", rendered)
         self.assertNotIn("You:", rendered)
         self.assertNotIn("Assistant:", rendered)
+        self.assertNotIn(PROMPT_BORDER, rendered)
+
+    def test_print_user_message_has_no_bottom_rule(self) -> None:
+        class _StdoutCapture:
+            def __init__(self) -> None:
+                self.parts: list[str] = []
+
+            def write(self, text: str) -> int:
+                self.parts.append(text)
+                return len(text)
+
+            def flush(self) -> None:
+                return None
+
+            def isatty(self) -> bool:
+                return False
+
+            def getvalue(self) -> str:
+                return "".join(self.parts)
+
+        fake_stdout = _StdoutCapture()
+        with patch("sys.stdout", fake_stdout):
+            print_user_message("hello")
+
+        rendered = fake_stdout.getvalue()
+        self.assertIn("❯ hello", rendered)
         self.assertNotIn(PROMPT_BORDER, rendered)
 
 

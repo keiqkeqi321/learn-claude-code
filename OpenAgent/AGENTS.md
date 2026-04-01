@@ -56,6 +56,7 @@ The runtime owns:
   - allow once
   - allow in this workspace
   - deny
+- `Allow in this workspace` should persist under `.openagent/permissions.json` so the workspace-scoped approval survives restarting OpenAgent.
 - Mode-switch prompts should let the user either switch to the requested non-Yolo mode or stay in the current mode.
 - After the user answers an authorization prompt, the agent should continue the same task without requiring the user to restate it.
 - Empty or incomplete sessions should not appear in resume history. A session must include both a visible user message and a visible assistant reply.
@@ -112,6 +113,7 @@ State lives under `.openagent/` in the workspace root. Important subfolders:
 - `.openagent/team`
 - `.openagent/jobs`
 - `.openagent/logs`
+- `.openagent/permissions.json`
 
 Do not casually change storage shape unless you also update load/save paths and compatibility expectations.
 

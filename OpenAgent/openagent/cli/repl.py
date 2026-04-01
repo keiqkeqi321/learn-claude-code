@@ -73,7 +73,7 @@ def _print_resumed_history(session) -> None:
     print("[resumed history]")
     for role, text in visible_messages:
         if role == "user":
-            print_user_message(text, underline=False)
+            print_user_message(text)
             continue
         print()
         print(_prefix_first_line(text, _assistant_prefix(ansi=sys.stdout.isatty())))
@@ -354,6 +354,7 @@ class TurnQueueRunner:
             for index, queue_line in enumerate(queue_lines, start=1):
                 fragments.extend([("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
         fragments.extend([*mode_line, ("", "\n")])
+        fragments.extend([("fg:#64748b", PROMPT_BORDER), ("", "\n")])
         fragments.extend(prompt_line)
         return fragments
 

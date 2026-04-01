@@ -212,6 +212,35 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn('"scope": "workspace"', result)
         self.assertIsNone(OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"}))
 
+    def test_workspace_authorization_is_persisted_under_openagent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir) / ".openagent"
+            runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+            runtime.settings = SimpleNamespace(storage=SimpleNamespace(data_dir=data_dir))
+            runtime.execution_mode = "plan"
+            runtime._workspace_authorized_tools = set()
+            runtime._once_authorized_tools = {}
+            runtime.authorization_request_handler = lambda **kwargs: {
+                "status": "approved",
+                "scope": "workspace",
+                "reason": "Allowed in this workspace.",
+            }
+
+            result = OpenAgentRuntime.request_authorization(runtime, "edit_file", "Need to patch a file")
+
+            self.assertIn('"scope": "workspace"', result)
+            permissions_path = data_dir / "permissions.json"
+            self.assertTrue(permissions_path.exists())
+            self.assertIn('"authorized_tools"', permissions_path.read_text(encoding="utf-8"))
+            self.assertIn('"edit_file"', permissions_path.read_text(encoding="utf-8"))
+
+            resumed_runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+            resumed_runtime.settings = SimpleNamespace(storage=SimpleNamespace(data_dir=data_dir))
+
+            loaded = OpenAgentRuntime._load_workspace_authorizations(resumed_runtime)
+
+            self.assertEqual(loaded, {"edit_file"})
+
     def test_request_mode_switch_rejects_yolo_target(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.execution_mode = "plan"

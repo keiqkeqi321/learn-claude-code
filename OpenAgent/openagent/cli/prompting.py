@@ -49,7 +49,7 @@ PROMPT_TEXT = "\u276f "
 PROMPT_ANSI = "\u276f "
 PROMPT_FORMATTED = FormattedText(
     [
-        ("#f8fafc bold", "\u276f "),
+        ("#38bdf8 bold", "\u276f "),
     ]
 )
 

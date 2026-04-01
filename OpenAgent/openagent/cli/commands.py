@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from openagent.runtime.agent import OpenAgentRuntime
 from openagent.runtime.messages import MarkdownStreamRenderer, render_markdown_text, render_message_content, render_text_content
-from openagent.cli.prompting import PROMPT_BORDER, choose_session_interactively, format_session_timestamp
+from openagent.cli.prompting import choose_session_interactively, format_session_timestamp
 
 
 ASSISTANT_BULLET = "\u25cf"
@@ -29,23 +29,21 @@ def _assistant_prefix(*, ansi: bool) -> str:
     return f"{ASSISTANT_BULLET} "
 
 
-def _gray_text(text: str, *, ansi: bool) -> str:
+def _user_prefix(*, ansi: bool) -> str:
     if ansi:
-        return f"\x1b[38;5;240m{text}\x1b[0m"
-    return text
+        return "\x1b[38;5;45m\u276f\x1b[0m "
+    return f"{USER_BULLET} "
 
 
-def print_user_message(text: str, *, ansi: bool | None = None, underline: bool = True) -> None:
+def print_user_message(text: str, *, ansi: bool | None = None) -> None:
     ansi_enabled = sys.stdout.isatty() if ansi is None else ansi
     lines = text.splitlines() or [""]
-    first = f"{USER_BULLET} {lines[0]}"
+    first = f"{_user_prefix(ansi=ansi_enabled)}{lines[0]}"
     remainder = [f"  {line}" if line else "  " for line in lines[1:]]
     print()
     print(first)
     for line in remainder:
         print(line)
-    if underline:
-        print(_gray_text(PROMPT_BORDER, ansi=ansi_enabled))
     print()
 
 

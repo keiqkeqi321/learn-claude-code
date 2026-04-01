@@ -43,7 +43,7 @@ from openagent.skills.loader import SkillLoader
 from openagent.storage.inbox import InboxStore
 from openagent.storage.jobs import JobStore
 from openagent.storage.sessions import SessionStore
-from openagent.storage.common import atomic_write_text
+from openagent.storage.common import atomic_write_text, read_json, write_json
 from openagent.storage.tasks import TaskStore
 from openagent.storage.team import TeamStore
 from openagent.storage.tool_logs import ToolLogStore
@@ -68,6 +68,7 @@ class OpenAgentRuntime:
     SILENT_TOOL_NAMES = {"TodoWrite"}
     MAX_UNDO_TURNS = 10
     TURN_BOUNDARY_TOOL_NAMES = {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}
+    WORKSPACE_PERMISSIONS_FILE = "permissions.json"
     _ansi_output_enabled: bool | None = None
     DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
         "You are {name}, a top-rated AI assistant.\n"
@@ -112,7 +113,7 @@ class OpenAgentRuntime:
         self.execution_mode = DEFAULT_EXECUTION_MODE
         self.authorization_request_handler = None
         self.mode_switch_request_handler = None
-        self._workspace_authorized_tools: set[str] = set()
+        self._workspace_authorized_tools = self._load_workspace_authorizations()
         self._once_authorized_tools: dict[str, int] = {}
         self.provider = self._make_provider()
         self.transcript_store = TranscriptStore(settings.storage.transcripts_dir)
@@ -405,6 +406,40 @@ class OpenAgentRuntime:
     def configured_provider_profiles(self) -> dict[str, ProviderProfileSettings]:
         return dict(self.settings.provider_profiles)
 
+    def _workspace_authorizations_path(self) -> Path | None:
+        settings = getattr(self, "settings", None)
+        storage = getattr(settings, "storage", None)
+        data_dir = getattr(storage, "data_dir", None)
+        if not isinstance(data_dir, Path):
+            return None
+        return data_dir / self.WORKSPACE_PERMISSIONS_FILE
+
+    def _load_workspace_authorizations(self) -> set[str]:
+        path = self._workspace_authorizations_path()
+        if path is None:
+            return set()
+        try:
+            payload = read_json(path, {"authorized_tools": []})
+        except Exception:
+            return set()
+        if not isinstance(payload, dict):
+            return set()
+        raw_tools = payload.get("authorized_tools", [])
+        if not isinstance(raw_tools, list):
+            return set()
+        authorized: set[str] = set()
+        for item in raw_tools:
+            tool_name = str(item).strip()
+            if tool_name:
+                authorized.add(tool_name)
+        return authorized
+
+    def _persist_workspace_authorizations(self) -> None:
+        path = self._workspace_authorizations_path()
+        if path is None:
+            return
+        write_json(path, {"authorized_tools": sorted(self._workspace_authorized_tools)})
+
     def authorize_tool_call(self, tool_name: str, payload: dict[str, Any], *, ctx=None) -> str | None:
         if tool_name in {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}:
             return None
@@ -446,6 +481,7 @@ class OpenAgentRuntime:
         if status == "approved":
             if scope == "workspace":
                 self._workspace_authorized_tools.add(normalized_tool)
+                self._persist_workspace_authorizations()
             elif scope == "once":
                 self._once_authorized_tools[normalized_tool] = self._once_authorized_tools.get(normalized_tool, 0) + 1
         payload = {
