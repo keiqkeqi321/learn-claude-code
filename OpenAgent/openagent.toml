@@ -7,7 +7,7 @@ name = "OpenAgent"
 # """
 
 [providers]
-default = "anthropic"
+default = "openrouter"
 
 [providers.anthropic]
 provider_type = "anthropic"
@@ -25,9 +25,9 @@ base_url = "https://coding.dashscope.aliyuncs.com/v1"
 
 [providers.openrouter]
 provider_type = "openai"
-models = ["step-3.5-flash"]
-default_model = "step-3.5-flash"
-api_key = "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"
+models = ["step-3.5-flash","qwen/qwen3.6-plus-preview:free"]
+default_model = "qwen/qwen3.6-plus-preview:free"
+api_key = "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"
 base_url = "https://openrouter.ai/api/v1"
 
 [providers.glm]
