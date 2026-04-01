@@ -229,6 +229,64 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("workspace files are read-only", blocked)
         self.assertNotIn("! Yolo", blocked)
 
+    def test_authorize_tool_call_allows_subagent_in_accept_edits_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        allowed = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "subagent",
+            {"prompt": "Inspect the repo", "agent_type": "general-purpose"},
+        )
+
+        self.assertIsNone(allowed)
+
+    def test_authorize_tool_call_blocks_explore_subagent_in_plan_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        blocked = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "subagent",
+            {"prompt": "Inspect the repo", "agent_type": "Explore"},
+        )
+
+        self.assertIn("requires explicit user approval", blocked)
+
+    def test_authorize_tool_call_blocks_general_purpose_subagent_in_plan_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        blocked = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "subagent",
+            {"prompt": "Patch a file", "agent_type": "general-purpose"},
+        )
+
+        self.assertIn("agent_type='general-purpose'", blocked)
+        self.assertIn("Use agent_type='Explore'", blocked)
+
+    def test_authorize_tool_call_allows_subagent_internal_tools(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        allowed = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "bash",
+            {"command": "Get-ChildItem -Recurse -Filter *.py -File"},
+            ctx=SimpleNamespace(actor="subagent"),
+        )
+
+        self.assertIsNone(allowed)
+
     def test_request_authorization_grants_once_and_is_consumed(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.execution_mode = "accept_edits"

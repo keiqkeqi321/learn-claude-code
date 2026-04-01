@@ -28,7 +28,7 @@ Parent context stays clean. Subagent context is discarded.
 
 ## How It Works
 
-1. The parent gets a `subagent` tool. The child gets all base tools except `subagent` (no recursive spawning).
+1. The parent gets a `subagent` tool. In `Explore` mode the child gets read-only subagent tools: `bash`, `read_file`, and `load_skill`. In `general-purpose` mode it also gets `write_file` and `edit_file`. Recursive spawning is still disabled.
 
 ```python
 PARENT_TOOLS = CHILD_TOOLS + [
@@ -72,6 +72,13 @@ def run_subagent(prompt: str) -> str:
 ```
 
 The child's entire message history (possibly 30+ tool calls) is discarded. The parent receives a one-paragraph summary as a normal `tool_result`.
+
+## Execution Modes
+
+- In `accept_edits`, the lead can invoke `subagent` directly.
+- In `shortcuts` and `plan`, `subagent` still requires `request_authorization` or a mode switch.
+- Writable subagents remain restricted outside `accept_edits` and `yolo`.
+- Once inside the subagent loop, the subagent's registered tools run inside the subagent boundary rather than being blocked like lead-only tool calls.
 
 ## What Changed From s03
 

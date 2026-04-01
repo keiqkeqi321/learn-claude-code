@@ -28,6 +28,7 @@ from openagent.providers.base import LLMProvider
 from openagent.providers.openai_provider import OpenAIProvider
 from openagent.runtime.compact import CompactManager, estimate_tokens, microcompact
 from openagent.runtime.execution_mode import (
+    ACCEPT_EDITS_BADGE,
     AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
     MODE_SWITCH_TOOL_NAME,
@@ -628,7 +629,28 @@ class OpenAgentRuntime:
             else:
                 self._once_authorized_tools[tool_name] = remaining - 1
             return None
+        if getattr(ctx, "actor", None) == "subagent":
+            return None
+        if tool_name == "subagent":
+            return self._authorize_subagent_call(payload)
         return tool_block_message(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE), tool_name)
+
+    def _authorize_subagent_call(self, payload: dict[str, Any]) -> str | None:
+        mode = normalize_execution_mode(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE))
+        if mode in {"accept_edits", "yolo"}:
+            return None
+        agent_type = str(payload.get("agent_type", "Explore")).strip() or "Explore"
+        spec = execution_mode_spec(mode)
+        if agent_type == "Explore":
+            return (
+                f"Blocked in {spec.title}: 'subagent' requires explicit user approval in read-only modes. "
+                "Call request_authorization if this subagent is necessary."
+            )
+        return (
+            f"Blocked in {spec.title}: 'subagent' with agent_type='{agent_type}' may edit workspace files. "
+            f"Use agent_type='Explore', call request_authorization, or request_mode_switch to "
+            f"{ACCEPT_EDITS_BADGE} accept edits on."
+        )
 
     def request_authorization(self, tool_name: str, reason: str, argument_summary: str = "") -> str:
         normalized_tool = str(tool_name).strip()
@@ -1008,10 +1030,17 @@ class OpenAgentRuntime:
                 handler=lambda ctx, payload: self.skill_loader.load(payload["name"]),
             )
         )
+        capability_guidance = (
+            "You are in Explore mode. Use read-only tools only: `bash`, `read_file`, and `load_skill`. "
+            "Do not attempt workspace edits."
+            if agent_type == "Explore"
+            else "You are in general-purpose mode. In addition to read-only tools, you may use `write_file` and `edit_file` when needed."
+        )
         messages = [make_user_text_message(prompt)]
         system_prompt = (
             f"You are an isolated subagent working in {self.settings.workspace_root}. "
-            "Keep the main context clean. Do the work, then return a concise summary.\n\n"
+            "Keep the main context clean. Do the work, then return a concise summary.\n"
+            f"{capability_guidance}\n\n"
             f"{self._environment_guidance()}"
         )
         final_text = "(subagent failed)"
