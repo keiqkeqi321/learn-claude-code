@@ -24,6 +24,22 @@ api_key = "replace-with-your-openai-key"
 # organization = "org_xxx"
 # max_tokens = 8000
 
+[model_traits."claude-sonnet-4-5"]
+cwt = 200000
+
+[model_traits."claude-3-5-haiku-latest"]
+cwt = 200000
+
+[model_traits."gpt-4.1"]
+cwt = 1047576
+
+[model_traits."gpt-4.1-mini"]
+cwt = 1047576
+
+# Provider-specific override when the same model id behaves differently.
+#[model_traits.openrouter."gpt-4.1"]
+#cwt = 262144
+
 [runtime]
 token_threshold = 100000
 command_timeout_seconds = 120

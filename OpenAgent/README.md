@@ -307,6 +307,22 @@ api_key = "replace-me"
 # max_tokens = 8000
 # timeout_seconds = 120
 
+[model_traits."claude-sonnet-4-5"]
+cwt = 200000
+
+[model_traits."claude-3-5-haiku-latest"]
+cwt = 200000
+
+[model_traits."gpt-4.1"]
+cwt = 1047576
+
+[model_traits."gpt-4.1-mini"]
+cwt = 1047576
+
+# Provider-specific override when needed.
+#[model_traits.openrouter."gpt-4.1"]
+#cwt = 262144
+
 [runtime]
 token_threshold = 100000
 command_timeout_seconds = 120
@@ -334,6 +350,15 @@ http_headers = { "X-API-Key" = "replace-me", "Accept" = "text/event-stream" }
 startup_timeout_sec = 20
 enabled = false
 ```
+
+OpenAgent now uses provider-aware token counting for context tracking:
+
+- Anthropic profiles prefer the native `messages.count_tokens` API.
+- OpenAI-compatible profiles prefer `tiktoken`.
+- The REPL status area shows current context usage as `used / total` plus percentage.
+- Configure model-wide defaults under `model_traits."<model-id>"`.
+- If the same model id needs a provider-specific override, use `model_traits.<provider>."<model-id>"`.
+- Today the only model trait is `cwt`, which means `context_window_tokens`.
 
 ### Selecting a Model
 

@@ -6,6 +6,11 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class ModelTraits:
+    context_window_tokens: int | None = None
+
+
+@dataclass(slots=True)
 class ProviderSettings:
     name: str = "anthropic"
     provider_type: str = "anthropic"
@@ -13,6 +18,7 @@ class ProviderSettings:
     api_key: str = ""
     base_url: str | None = None
     organization: str | None = None
+    context_window_tokens: int | None = None
     max_tokens: int = 8_000
     timeout_seconds: int = 120
 
@@ -22,10 +28,12 @@ class ProviderProfileSettings:
     name: str
     provider_type: str = "anthropic"
     models: list[str] = field(default_factory=list)
+    model_traits: dict[str, ModelTraits] = field(default_factory=dict)
     default_model: str = ""
     api_key: str = ""
     base_url: str | None = None
     organization: str | None = None
+    context_window_tokens: int | None = None
     max_tokens: int = 8_000
     timeout_seconds: int = 120
 

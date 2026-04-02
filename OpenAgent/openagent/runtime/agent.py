@@ -18,12 +18,12 @@ from typing import Any
 from openagent.collaboration.bus import MessageBus
 from openagent.collaboration.protocols import RequestTracker
 from openagent.config.models import AppSettings, ProviderProfileSettings, ProviderSettings
-from openagent.config.settings import persist_provider_selection
+from openagent.config.settings import _materialize_provider, persist_provider_selection
 from openagent.mcp.registry import MCPRegistry
 from openagent.providers.anthropic_provider import AnthropicProvider
 from openagent.providers.base import LLMProvider
 from openagent.providers.openai_provider import OpenAIProvider
-from openagent.runtime.compact import CompactManager, estimate_tokens, microcompact
+from openagent.runtime.compact import CompactManager, ContextWindowUsage, estimate_payload_tokens, microcompact
 from openagent.runtime.execution_mode import (
     AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
@@ -137,6 +137,7 @@ class OpenAgentRuntime:
             settings.runtime.max_tool_output_chars,
         )
         self.compact_manager = CompactManager(self.provider, self.transcript_store, settings.provider.max_tokens)
+        self._context_usage_cache: dict[str, tuple[tuple[Any, ...], ContextWindowUsage]] = {}
         self.mcp_registry = MCPRegistry(settings.mcp_servers)
         self.team_manager = TeammateRuntimeManager(
             runtime=self,
@@ -297,25 +298,109 @@ class OpenAgentRuntime:
         profile = self.settings.provider_profiles[normalized_provider]
         if normalized_model not in profile.models:
             raise ValueError(f"Model '{normalized_model}' is not configured for provider '{normalized_provider}'.")
-        self.settings.provider = ProviderSettings(
-            name=profile.name,
-            provider_type=profile.provider_type,
-            model=normalized_model,
-            api_key=profile.api_key,
-            base_url=profile.base_url,
-            organization=profile.organization,
-            max_tokens=profile.max_tokens,
-            timeout_seconds=profile.timeout_seconds,
-        )
+        self.settings.provider = _materialize_provider(profile, normalized_model)
         self.settings.provider_profiles[normalized_provider].default_model = normalized_model
         self.provider = self._instantiate_provider(self.settings.provider)
         self.compact_manager.provider = self.provider
         self.compact_manager.model_max_tokens = self.settings.provider.max_tokens
+        self._context_usage_cache = {}
         persist_provider_selection(self.settings, normalized_provider, normalized_model)
         return (
             f"Switched to provider '{self.settings.provider.name}' with model "
             f"'{self.settings.provider.model}' and saved it to .openagent/openagent.toml."
         )
+
+    def _context_usage_tools(self, actor: str) -> list[dict[str, Any]]:
+        registry = self.registry if actor == "lead" else self.worker_registry
+        return registry.schemas()
+
+    def _context_usage_cache_key(
+        self,
+        session: AgentSession,
+        *,
+        actor: str,
+        role: str,
+        system_prompt: str,
+        tools: list[dict[str, Any]],
+    ) -> tuple[Any, ...]:
+        messages = getattr(session, "messages", None)
+        if not isinstance(messages, list):
+            messages = []
+        last_message = messages[-1] if messages else None
+        try:
+            last_message_digest = (
+                json.dumps(last_message, ensure_ascii=False, sort_keys=True, default=str) if last_message is not None else ""
+            )
+        except Exception:
+            last_message_digest = str(last_message)
+        return (
+            id(messages),
+            len(messages),
+            getattr(session, "latest_turn_id", None),
+            last_message_digest,
+            actor,
+            role,
+            system_prompt,
+            tuple(str(tool.get("name", "")) for tool in tools),
+            getattr(self.settings.provider, "name", ""),
+            getattr(self.settings.provider, "model", ""),
+            getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE),
+        )
+
+    def context_window_usage(
+        self,
+        session: AgentSession,
+        *,
+        actor: str = "lead",
+        role: str = "lead coding agent",
+    ) -> ContextWindowUsage:
+        messages = getattr(session, "messages", None)
+        if not isinstance(messages, list):
+            messages = []
+        try:
+            system_prompt = self.build_system_prompt(actor=actor, role=role)
+        except TypeError:
+            system_prompt = self.build_system_prompt()
+        tools = self._context_usage_tools(actor)
+        cache_key = self._context_usage_cache_key(
+            session,
+            actor=actor,
+            role=role,
+            system_prompt=system_prompt,
+            tools=tools,
+        )
+        cache = getattr(self, "_context_usage_cache", None)
+        if cache is None:
+            cache = {}
+            self._context_usage_cache = cache
+        cached = cache.get(session.id)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+        provider = getattr(self, "provider", None)
+        counter_name = "estimate"
+        try:
+            if provider is not None and callable(getattr(provider, "count_tokens", None)):
+                used_tokens = int(provider.count_tokens(system_prompt, messages, tools))
+                counter_name = str(provider.token_counter_name())
+            else:
+                raise RuntimeError("Provider token counting unavailable.")
+        except Exception:
+            used_tokens = estimate_payload_tokens(system_prompt, messages, tools)
+
+        context_window_tokens = None
+        if provider is not None and callable(getattr(provider, "context_window_tokens", None)):
+            context_window_tokens = provider.context_window_tokens()
+        if context_window_tokens is None:
+            context_window_tokens = getattr(getattr(self.settings, "provider", None), "context_window_tokens", None)
+
+        usage = ContextWindowUsage(
+            used_tokens=used_tokens,
+            max_tokens=int(context_window_tokens) if context_window_tokens is not None else None,
+            counter_name=counter_name,
+        )
+        cache[session.id] = (cache_key, usage)
+        return usage
 
     def _register_core_tools(self, registry: ToolRegistry) -> None:
         register_shell_tool(registry)
@@ -506,7 +591,7 @@ class OpenAgentRuntime:
             for _ in range(self.settings.runtime.max_agent_rounds):
                 self._raise_if_interrupted(should_interrupt)
                 microcompact(session.messages)
-                if estimate_tokens(session.messages) > self.settings.runtime.token_threshold:
+                if self.context_window_usage(session).used_tokens > self.settings.runtime.token_threshold:
                     session.messages = self.compact_manager.auto_compact(session.id, session.messages)
                 background_notifications = self.background_manager.drain()
                 if background_notifications:

@@ -53,6 +53,24 @@ class AnthropicProvider(LLMProvider):
         self.client = Anthropic(**kwargs)
         self.settings = settings
 
+    def count_tokens(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> int:
+        response = self.client.messages.count_tokens(
+            model=self.settings.model,
+            system=system_prompt,
+            messages=_to_anthropic_messages(messages),
+            tools=tools,
+            timeout=self.settings.timeout_seconds,
+        )
+        return int(response.input_tokens)
+
+    def token_counter_name(self) -> str:
+        return "anthropic_native"
+
     def complete(
         self,
         system_prompt: str,

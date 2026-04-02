@@ -7,8 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from openagent.config.models import ProviderProfileSettings, ProviderSettings
+from openagent.config.models import ModelTraits, ProviderProfileSettings, ProviderSettings
 from openagent.runtime.agent import OpenAgentRuntime, TurnInterrupted
+from openagent.runtime.compact import ContextWindowUsage
 from openagent.runtime.messages import AssistantTurn, ToolCall
 from openagent.runtime.session import AgentSession
 
@@ -426,6 +427,10 @@ class RuntimeToolOutputTests(unittest.TestCase):
                     name="openai",
                     provider_type="openai",
                     models=["gpt-4.1", "gpt-4.1-mini"],
+                    model_traits={
+                        "gpt-4.1": ModelTraits(context_window_tokens=1_047_576),
+                        "gpt-4.1-mini": ModelTraits(context_window_tokens=262_144),
+                    },
                     default_model="gpt-4.1",
                     api_key="",
                     base_url="https://api.openai.com/v1",
@@ -449,11 +454,54 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertEqual(runtime.settings.provider.name, "openai")
         self.assertEqual(runtime.settings.provider.provider_type, "openai")
         self.assertEqual(runtime.settings.provider.model, "gpt-4.1-mini")
+        self.assertEqual(runtime.settings.provider.context_window_tokens, 262_144)
         self.assertEqual(runtime.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
         self.assertEqual(runtime.compact_manager.provider, {"provider": "openai", "model": "gpt-4.1-mini"})
         self.assertEqual(runtime.compact_manager.model_max_tokens, 4096)
         self.assertEqual(runtime.settings.provider_profiles["openai"].default_model, "gpt-4.1-mini")
         mock_persist.assert_called_once_with(runtime.settings, "openai", "gpt-4.1-mini")
+
+    def test_context_window_usage_prefers_provider_counter(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5", context_window_tokens=200_000))
+        runtime.provider = SimpleNamespace(
+            count_tokens=lambda system_prompt, messages, tools: 50_000,
+            token_counter_name=lambda: "anthropic_native",
+            context_window_tokens=lambda: 200_000,
+        )
+        runtime.registry = SimpleNamespace(schemas=lambda: [])
+        runtime.worker_registry = SimpleNamespace(schemas=lambda: [])
+        runtime.build_system_prompt = lambda actor="lead", role="lead coding agent": "system"
+        runtime.execution_mode = "accept_edits"
+        session = AgentSession(id="session-1", messages=[{"role": "user", "content": "hello"}])
+
+        usage = OpenAgentRuntime.context_window_usage(runtime, session)
+
+        self.assertIsInstance(usage, ContextWindowUsage)
+        self.assertEqual(usage.used_tokens, 50_000)
+        self.assertEqual(usage.max_tokens, 200_000)
+        self.assertEqual(usage.counter_name, "anthropic_native")
+        self.assertEqual(usage.usage_percent, 25.0)
+
+    def test_context_window_usage_falls_back_to_payload_estimate(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(name="openai", model="gpt-4.1", context_window_tokens=128_000))
+        runtime.provider = SimpleNamespace(
+            count_tokens=lambda system_prompt, messages, tools: (_ for _ in ()).throw(RuntimeError("count failed")),
+            token_counter_name=lambda: "tiktoken",
+            context_window_tokens=lambda: 128_000,
+        )
+        runtime.registry = SimpleNamespace(schemas=lambda: [])
+        runtime.worker_registry = SimpleNamespace(schemas=lambda: [])
+        runtime.build_system_prompt = lambda actor="lead", role="lead coding agent": "system"
+        runtime.execution_mode = "accept_edits"
+        session = AgentSession(id="session-1", messages=[{"role": "user", "content": "hello world"}])
+
+        usage = OpenAgentRuntime.context_window_usage(runtime, session)
+
+        self.assertGreater(usage.used_tokens, 0)
+        self.assertEqual(usage.max_tokens, 128_000)
+        self.assertEqual(usage.counter_name, "estimate")
 
     def test_instantiate_provider_uses_provider_type_instead_of_profile_name(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

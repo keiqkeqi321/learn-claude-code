@@ -22,6 +22,7 @@ from openagent.cli.prompting import (
     styled_prompt_message,
 )
 from openagent.runtime.agent import TurnInterrupted
+from openagent.runtime.compact import ContextWindowUsage
 from openagent.runtime.execution_mode import (
     DEFAULT_EXECUTION_MODE,
     execution_mode_spec,
@@ -402,6 +403,7 @@ class TurnQueueRunner:
         prompt_line = list(styled_prompt_message())
         mode_line = self._execution_mode_fragments()
         status_line = self._status_line()
+        context_line = self.current_context_label()
         todo_lines = self._todo_lines()
         queue_lines = self._queue_preview_lines()
         fragments = []
@@ -412,6 +414,8 @@ class TurnQueueRunner:
         if self.stable_prompt:
             for style, line in todo_lines:
                 fragments.extend([panel_prefix, (style, line), ("", "\n")])
+            if context_line:
+                fragments.extend([panel_prefix, ("fg:#7dd3fc", context_line), ("", "\n")])
             for index, queue_line in enumerate(queue_lines, start=1):
                 fragments.extend([panel_prefix, ("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
         fragments.append(panel_prefix)
@@ -429,8 +433,42 @@ class TurnQueueRunner:
         model_name = getattr(provider, "model", "unknown")
         return f"model: {provider_name} / {model_name}"
 
+    def _format_token_count(self, token_count: int) -> str:
+        if token_count >= 1_000_000:
+            return f"{token_count / 1_000_000:.2f}M"
+        if token_count >= 1_000:
+            return f"{token_count / 1_000:.1f}k"
+        return str(token_count)
+
+    def current_context_usage(self) -> ContextWindowUsage | None:
+        usage_getter = getattr(self.runtime, "context_window_usage", None)
+        if not callable(usage_getter):
+            return None
+        try:
+            return usage_getter(self.session)
+        except Exception:
+            return None
+
+    def current_context_label(self) -> str:
+        usage = self.current_context_usage()
+        if usage is None:
+            return ""
+        if usage.max_tokens:
+            percent = usage.usage_percent or 0.0
+            return (
+                f"ctx: {percent:.1f}% "
+                f"({self._format_token_count(usage.used_tokens)} / {self._format_token_count(usage.max_tokens)} tokens)"
+            )
+        return f"ctx: {self._format_token_count(usage.used_tokens)} tokens"
+
+    def current_status_label(self) -> str:
+        context_label = self.current_context_label()
+        if not context_label:
+            return self.current_model_label()
+        return f"{self.current_model_label()} | {context_label}"
+
     def bottom_toolbar(self):
-        return [("fg:#94a3b8", self.current_model_label())]
+        return [("fg:#94a3b8", self.current_status_label())]
 
     def current_execution_mode(self):
         return execution_mode_spec(self._execution_mode)
@@ -675,12 +713,12 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                         if sys.stdout.isatty():
                             query = input(
                                 f"{runner.execution_mode_ansi_label()}\n"
-                                f"{runner.current_model_label()}\n"
+                                f"{runner.current_status_label()}\n"
                                 f"{fallback_prompt_message()}"
                             )
                         else:
                             query = input(
-                                f"{runner.execution_mode_label()}\n{runner.current_model_label()}\n{PROMPT_TEXT}"
+                                f"{runner.execution_mode_label()}\n{runner.current_status_label()}\n{PROMPT_TEXT}"
                             )
                 except (EOFError, KeyboardInterrupt):
                     print()

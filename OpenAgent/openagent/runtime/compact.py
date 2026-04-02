@@ -1,13 +1,43 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from typing import Any
 
 from openagent.providers.base import ProviderError
 
 
+@dataclass(slots=True)
+class ContextWindowUsage:
+    used_tokens: int
+    max_tokens: int | None = None
+    counter_name: str = "estimate"
+
+    @property
+    def usage_ratio(self) -> float | None:
+        if not self.max_tokens:
+            return None
+        return self.used_tokens / self.max_tokens
+
+    @property
+    def usage_percent(self) -> float | None:
+        ratio = self.usage_ratio
+        if ratio is None:
+            return None
+        return ratio * 100.0
+
+
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    return len(json.dumps(messages, ensure_ascii=False, default=str)) // 4
+    return estimate_payload_tokens("", messages, [])
+
+
+def estimate_payload_tokens(system_prompt: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> int:
+    payload = {
+        "system": system_prompt,
+        "messages": messages,
+        "tools": tools,
+    }
+    return len(json.dumps(payload, ensure_ascii=False, default=str)) // 4
 
 
 def microcompact(messages: list[dict[str, Any]]) -> None:

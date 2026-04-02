@@ -9,6 +9,11 @@ from openagent.config.models import ProviderSettings
 from openagent.providers.base import LLMProvider, ProviderError, TextCallback
 from openagent.runtime.messages import AssistantTurn, ToolCall
 
+try:
+    import tiktoken
+except Exception:  # pragma: no cover - optional until dependencies are installed
+    tiktoken = None
+
 
 def _schema_to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -70,9 +75,48 @@ def _to_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return converted
 
 
+def _encoding_for_openai_model(model: str):
+    if tiktoken is None:
+        raise ProviderError("tiktoken is not installed.")
+    candidates = [model.strip()]
+    if "/" in model:
+        candidates.append(model.split("/", 1)[1].strip())
+    if ":" in model:
+        candidates.append(model.split(":", 1)[0].strip())
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return tiktoken.encoding_for_model(candidate)
+        except KeyError:
+            continue
+    lowered = model.strip().lower()
+    if any(token in lowered for token in ("gpt-4.1", "gpt-5", "o1", "o3", "o4")):
+        return tiktoken.get_encoding("o200k_base")
+    return tiktoken.get_encoding("cl100k_base")
+
+
 class OpenAIProvider(LLMProvider):
     def __init__(self, settings: ProviderSettings):
         self.settings = settings
+
+    def count_tokens(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> int:
+        encoding = _encoding_for_openai_model(self.settings.model)
+        payload = {
+            "messages": [{"role": "system", "content": system_prompt}] + _to_openai_messages(messages),
+            "tools": [_schema_to_openai_tool(tool) for tool in tools],
+            "tool_choice": "auto",
+        }
+        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return len(encoding.encode(serialized))
+
+    def token_counter_name(self) -> str:
+        return "tiktoken"
 
     def complete(
         self,

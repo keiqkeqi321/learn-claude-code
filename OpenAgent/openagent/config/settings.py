@@ -7,6 +7,7 @@ from openagent.config.models import (
     AgentSettings,
     AppSettings,
     MCPServerSettings,
+    ModelTraits,
     ProviderProfileSettings,
     ProviderSettings,
     RuntimeSettings,
@@ -189,6 +190,19 @@ def _normalize_provider_type(value: str | None, *, profile_name: str) -> str:
     return provider_type
 
 
+def _infer_context_window_tokens(provider_type: str, model: str) -> int:
+    lowered = model.strip().lower()
+    if provider_type == "anthropic" or "claude" in lowered:
+        return 200_000
+    if "gpt-4.1" in lowered:
+        return 1_047_576
+    if any(token in lowered for token in ("gpt-5", "o1", "o3", "o4", "gpt-4o")):
+        return 128_000
+    if any(token in lowered for token in ("qwen", "glm", "kimi", "deepseek", "llama", "mistral", "gemini")):
+        return 128_000
+    return 128_000
+
+
 def _default_provider_profile(name: str) -> ProviderProfileSettings:
     provider_name = name.strip().lower()
     provider_type = _default_provider_type(provider_name)
@@ -197,22 +211,76 @@ def _default_provider_profile(name: str) -> ProviderProfileSettings:
             name=provider_name,
             provider_type=provider_type,
             models=["gpt-4.1"],
+            model_traits={},
             default_model="gpt-4.1",
             api_key="",
             base_url="https://api.openai.com/v1",
             organization=None,
+            context_window_tokens=None,
         )
     return ProviderProfileSettings(
         name=provider_name,
         provider_type=provider_type,
         models=["claude-sonnet-4-5"],
+        model_traits={},
         default_model="claude-sonnet-4-5",
         api_key="",
         base_url=None,
+        context_window_tokens=None,
     )
 
 
-def _build_provider_profile(name: str, item: dict) -> ProviderProfileSettings:
+def _build_model_traits(item: dict) -> ModelTraits:
+    context_window_tokens = item.get("cwt", item.get("context_window_tokens"))
+    return ModelTraits(
+        context_window_tokens=int(context_window_tokens) if context_window_tokens is not None else None,
+    )
+
+
+def _is_model_traits_leaf(item: object) -> bool:
+    if not isinstance(item, dict) or not item:
+        return False
+    return any(not isinstance(value, dict) for value in item.values())
+
+
+def _load_global_model_traits(raw: dict) -> dict[str, ModelTraits]:
+    traits_root = raw.get("model_traits", {})
+    if not isinstance(traits_root, dict):
+        return {}
+    model_traits: dict[str, ModelTraits] = {}
+    for model_name, item in traits_root.items():
+        if not _is_model_traits_leaf(item):
+            continue
+        normalized_model_name = str(model_name).strip()
+        if not normalized_model_name:
+            continue
+        model_traits[normalized_model_name] = _build_model_traits(item)
+    return model_traits
+
+
+def _load_provider_model_traits(raw: dict, provider_name: str) -> dict[str, ModelTraits]:
+    traits_root = raw.get("model_traits", {})
+    if not isinstance(traits_root, dict):
+        return {}
+    provider_traits_raw = {}
+    for raw_provider_name, item in traits_root.items():
+        if str(raw_provider_name).strip().lower() == provider_name:
+            provider_traits_raw = item
+            break
+    if not isinstance(provider_traits_raw, dict):
+        return {}
+    model_traits: dict[str, ModelTraits] = {}
+    for model_name, item in provider_traits_raw.items():
+        if not _is_model_traits_leaf(item):
+            continue
+        normalized_model_name = str(model_name).strip()
+        if not normalized_model_name:
+            continue
+        model_traits[normalized_model_name] = _build_model_traits(item)
+    return model_traits
+
+
+def _build_provider_profile(name: str, item: dict, raw: dict) -> ProviderProfileSettings:
     provider_name = name.strip().lower()
     defaults = _default_provider_profile(provider_name)
     provider_type = _normalize_provider_type(item.get("provider_type"), profile_name=provider_name)
@@ -224,14 +292,20 @@ def _build_provider_profile(name: str, item: dict) -> ProviderProfileSettings:
     if not models:
         models = list(defaults.models)
         default_model = defaults.default_model
+    model_traits = dict(_load_global_model_traits(raw))
+    model_traits.update(_load_provider_model_traits(raw, provider_name))
     return ProviderProfileSettings(
         name=provider_name,
         provider_type=provider_type,
         models=models,
+        model_traits=model_traits,
         default_model=default_model or models[0],
         api_key=str(item.get("api_key", defaults.api_key)),
         base_url=str(item["base_url"]) if item.get("base_url") else defaults.base_url,
         organization=str(item["organization"]) if item.get("organization") else defaults.organization,
+        context_window_tokens=int(item["context_window_tokens"])
+        if item.get("context_window_tokens") is not None
+        else defaults.context_window_tokens,
         max_tokens=int(item.get("max_tokens", defaults.max_tokens)),
         timeout_seconds=int(item.get("timeout_seconds", defaults.timeout_seconds)),
     )
@@ -246,7 +320,7 @@ def _load_provider_profiles(raw: dict) -> tuple[dict[str, ProviderProfileSetting
         for name, item in providers_raw.items():
             if name == "default" or not isinstance(item, dict):
                 continue
-            profiles[str(name).strip().lower()] = _build_provider_profile(str(name), item)
+            profiles[str(name).strip().lower()] = _build_provider_profile(str(name), item, raw)
     if not profiles:
         fallback_name = "anthropic"
         profiles[fallback_name] = _default_provider_profile(fallback_name)
@@ -262,6 +336,7 @@ def _materialize_provider(profile: ProviderProfileSettings, model: str | None = 
     selected_model = (model or profile.default_model).strip()
     if selected_model not in profile.models:
         raise ValueError(f"Model '{selected_model}' is not configured for provider '{profile.name}'.")
+    model_traits = profile.model_traits.get(selected_model)
     return ProviderSettings(
         name=profile.name,
         provider_type=profile.provider_type,
@@ -269,6 +344,11 @@ def _materialize_provider(profile: ProviderProfileSettings, model: str | None = 
         api_key=profile.api_key,
         base_url=profile.base_url,
         organization=profile.organization,
+        context_window_tokens=(
+            model_traits.context_window_tokens
+            if model_traits and model_traits.context_window_tokens is not None
+            else profile.context_window_tokens or _infer_context_window_tokens(profile.provider_type, selected_model)
+        ),
         max_tokens=profile.max_tokens,
         timeout_seconds=profile.timeout_seconds,
     )

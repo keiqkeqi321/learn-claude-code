@@ -14,6 +14,7 @@ from openagent.cli.repl import (
     _resolve_authorization_requests,
     _resolve_mode_switch_requests,
 )
+from openagent.runtime.compact import ContextWindowUsage
 from openagent.tools.todo import TodoManager
 
 
@@ -29,11 +30,21 @@ class ReplTodoTests(unittest.TestCase):
         self.assertEqual(runner.current_model_label(), "model: anthropic / glm-5")
         self.assertIn("accept edits on", runner.execution_mode_label())
 
-    def test_bottom_toolbar_shows_model_label(self) -> None:
-        runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="openai", model="gpt-5")))
+    def test_bottom_toolbar_shows_model_and_context_window(self) -> None:
+        runtime = SimpleNamespace(
+            settings=SimpleNamespace(provider=SimpleNamespace(name="openai", model="gpt-5")),
+            context_window_usage=lambda session: ContextWindowUsage(
+                used_tokens=40_000,
+                max_tokens=200_000,
+                counter_name="tiktoken",
+            ),
+        )
         runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
 
-        self.assertEqual(runner.bottom_toolbar(), [("fg:#94a3b8", "model: openai / gpt-5")])
+        self.assertEqual(
+            runner.bottom_toolbar(),
+            [("fg:#94a3b8", "model: openai / gpt-5 | ctx: 20.0% (40.0k / 200.0k tokens)")],
+        )
 
     def test_prompt_message_shows_open_todos_before_mode_and_prompt(self) -> None:
         session = SimpleNamespace(
@@ -99,6 +110,21 @@ class ReplTodoTests(unittest.TestCase):
         self.assertIn("Refactor module <- Refactoring module", rendered)
         self.assertIn("Run checks", rendered)
         self.assertNotIn("Drop old approach", rendered)
+
+    def test_prompt_message_shows_context_window_before_mode(self) -> None:
+        runtime = SimpleNamespace(
+            context_window_usage=lambda session: ContextWindowUsage(
+                used_tokens=64_000,
+                max_tokens=200_000,
+                counter_name="anthropic_native",
+            )
+        )
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+
+        rendered = _render_prompt_text(runner.prompt_message())
+
+        self.assertIn("ctx: 32.0% (64.0k / 200.0k tokens)", rendered)
+        self.assertLess(rendered.index("ctx: 32.0% (64.0k / 200.0k tokens)"), rendered.index("accept edits on"))
 
     def test_todo_manager_treats_cancelled_items_as_closed_and_hidden(self) -> None:
         session = SimpleNamespace(todo_items=[])

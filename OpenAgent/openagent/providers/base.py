@@ -26,6 +26,22 @@ class LLMProvider(ABC):
     ) -> AssistantTurn:
         raise NotImplementedError
 
+    def count_tokens(
+        self,
+        system_prompt: str,
+        messages: list[NormalizedMessage],
+        tools: list[dict[str, Any]],
+    ) -> int:
+        raise NotImplementedError("Token counting is not implemented for this provider.")
+
+    def context_window_tokens(self) -> int | None:
+        settings = getattr(self, "settings", None)
+        value = getattr(settings, "context_window_tokens", None)
+        return int(value) if value is not None else None
+
+    def token_counter_name(self) -> str:
+        return "provider"
+
 
 def dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)

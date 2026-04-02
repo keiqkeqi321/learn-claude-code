@@ -66,6 +66,70 @@ class SettingsOverrideTests(unittest.TestCase):
         self.assertEqual(settings.provider.organization, "org-test")
         self.assertEqual(settings.provider.provider_type, "openai")
 
+    def test_load_settings_reads_global_model_traits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home = root / "home"
+            self._write_workspace_config(
+                root,
+                """
+                [providers]
+                default = "openrouter"
+
+                [providers.openrouter]
+                provider_type = "openai"
+                models = ["qwen/qwen3.6-plus-preview:free"]
+                default_model = "qwen/qwen3.6-plus-preview:free"
+
+                [model_traits."qwen/qwen3.6-plus-preview:free"]
+                cwt = 262144
+                """,
+            )
+
+            with self._patched_home(home):
+                settings = load_settings(root)
+
+        self.assertEqual(settings.provider.context_window_tokens, 262144)
+        self.assertEqual(
+            settings.provider_profiles["openrouter"].model_traits["qwen/qwen3.6-plus-preview:free"].context_window_tokens,
+            262144,
+        )
+
+    def test_load_settings_provider_model_traits_override_global_model_traits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home = root / "home"
+            self._write_workspace_config(
+                root,
+                """
+                [providers]
+                default = "openrouter"
+
+                [providers.openrouter]
+                provider_type = "openai"
+                models = ["glm-5"]
+                default_model = "glm-5"
+
+                [providers.glm]
+                provider_type = "anthropic"
+                models = ["glm-5"]
+                default_model = "glm-5"
+
+                [model_traits."glm-5"]
+                cwt = 131072
+
+                [model_traits.glm."glm-5"]
+                cwt = 262144
+                """,
+            )
+
+            with self._patched_home(home):
+                openrouter_settings = load_settings(root, provider_override="openrouter", model_override="glm-5")
+                glm_settings = load_settings(root, provider_override="glm", model_override="glm-5")
+
+        self.assertEqual(openrouter_settings.provider.context_window_tokens, 131072)
+        self.assertEqual(glm_settings.provider.context_window_tokens, 262144)
+
     def test_load_settings_allows_custom_provider_name_to_map_to_openai_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
