@@ -5,7 +5,7 @@ from typing import Any
 
 from openagent.runtime.events import ToolExecutionContext
 from openagent.runtime.messages import make_tool_result_message, make_user_text_message
-from openagent.tools.filesystem import edit_file, read_file, write_file
+from openagent.tools.filesystem import edit_file, glob_search, grep_search, read_file, write_file
 from openagent.tools.registry import ToolDefinition, ToolRegistry
 from openagent.tools.shell import register_shell_tool
 
@@ -17,7 +17,7 @@ class SubagentRunner:
     def run_subagent(self, prompt: str, agent_type: str = "Explore") -> str:
         registry = self._build_registry(agent_type)
         capability_guidance = (
-            "You are in Explore mode. Use read-only tools only: `bash`, `read_file`, and `load_skill`. "
+            "You are in Explore mode. Use read-only tools only: `bash`, `glob`, `grep`, `read_file`, and `load_skill`. "
             "Do not attempt workspace edits."
             if agent_type == "Explore"
             else "You are in general-purpose mode. In addition to read-only tools, you may use `write_file` and `edit_file` when needed."
@@ -62,6 +62,44 @@ class SubagentRunner:
     def _build_registry(self, agent_type: str) -> ToolRegistry:
         registry = ToolRegistry()
         register_shell_tool(registry)
+        registry.register(
+            ToolDefinition(
+                name="glob",
+                description="Search for files or directories by glob pattern inside the workspace.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                        "recursive": {"type": "boolean"},
+                        "match": {"type": "string", "enum": ["files", "dirs", "all"]},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["pattern"],
+                },
+                handler=glob_search,
+            )
+        )
+        registry.register(
+            ToolDefinition(
+                name="grep",
+                description="Search file contents inside the workspace and return matching lines.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string"},
+                        "path": {"type": "string"},
+                        "glob": {"type": "string"},
+                        "recursive": {"type": "boolean"},
+                        "case_sensitive": {"type": "boolean"},
+                        "use_regex": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["pattern"],
+                },
+                handler=grep_search,
+            )
+        )
         registry.register(
             ToolDefinition(
                 name="read_file",

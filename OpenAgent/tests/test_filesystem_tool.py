@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from openagent.tools.filesystem import edit_file, write_file
+from openagent.tools.filesystem import edit_file, glob_search, grep_search, write_file
 from openagent.tools.registry import ToolDefinition, ToolRegistry
 
 
@@ -53,6 +53,46 @@ class FilesystemToolTests(unittest.TestCase):
         self.assertEqual(result["added_lines"], 1)
         self.assertEqual(result["removed_lines"], 0)
         self.assertEqual(len(session.pending_file_changes), 1)
+
+    def test_glob_search_returns_matching_workspace_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+            (root / "README.md").write_text("hello\n", encoding="utf-8")
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            result = glob_search(ctx, {"pattern": "*.py", "recursive": True})
+
+        self.assertEqual(result, "src/app.py")
+
+    def test_grep_search_returns_matching_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("alpha\nbeta\n", encoding="utf-8")
+            (root / "README.md").write_text("beta docs\n", encoding="utf-8")
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            result = grep_search(ctx, {"pattern": "beta", "glob": "*.py"})
+
+        self.assertEqual(result, "src/app.py:2:beta")
 
     def test_tool_registry_applies_execution_mode_guard_before_write_handler(self) -> None:
         registry = ToolRegistry()

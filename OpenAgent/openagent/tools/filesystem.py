@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import difflib
+import fnmatch
 from pathlib import Path
+import re
 from typing import Any
 
 from openagent.tools.registry import ToolDefinition
@@ -48,6 +50,94 @@ def read_file(ctx: Any, payload: dict[str, Any]) -> str:
     if limit and limit < len(lines):
         lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
     return "\n".join(lines)[: ctx.runtime.settings.runtime.max_tool_output_chars]
+
+
+def glob_search(ctx: Any, payload: dict[str, Any]) -> str:
+    workspace_root = ctx.runtime.settings.workspace_root
+    base_path = safe_path(workspace_root, str(payload.get("path", ".")))
+    if not base_path.exists():
+        return f"Error: Path not found: {payload.get('path', '.')}"
+    if not base_path.is_dir():
+        return f"Error: Path is not a directory: {payload.get('path', '.')}"
+
+    pattern = str(payload["pattern"]).strip()
+    recursive = bool(payload.get("recursive", True))
+    match_type = str(payload.get("match", "files")).strip().lower()
+    limit = max(1, int(payload.get("limit", 100)))
+    if match_type not in {"files", "dirs", "all"}:
+        return "Error: match must be one of 'files', 'dirs', or 'all'."
+
+    iterator = base_path.rglob("*") if recursive else base_path.glob("*")
+    results: list[str] = []
+    truncated = False
+    for candidate in iterator:
+        is_dir = candidate.is_dir()
+        if match_type == "files" and is_dir:
+            continue
+        if match_type == "dirs" and not is_dir:
+            continue
+        relative = candidate.relative_to(workspace_root).as_posix()
+        if not (fnmatch.fnmatch(relative, pattern) or fnmatch.fnmatch(candidate.name, pattern)):
+            continue
+        results.append(relative + ("/" if is_dir else ""))
+        if len(results) >= limit:
+            truncated = True
+            break
+    if not results:
+        return "(no matches)"
+    if truncated:
+        results.append(f"... ({limit} results shown)")
+    return "\n".join(results)[: ctx.runtime.settings.runtime.max_tool_output_chars]
+
+
+def grep_search(ctx: Any, payload: dict[str, Any]) -> str:
+    workspace_root = ctx.runtime.settings.workspace_root
+    base_path = safe_path(workspace_root, str(payload.get("path", ".")))
+    if not base_path.exists():
+        return f"Error: Path not found: {payload.get('path', '.')}"
+    if not base_path.is_dir():
+        return f"Error: Path is not a directory: {payload.get('path', '.')}"
+
+    pattern = str(payload["pattern"])
+    glob_pattern = str(payload.get("glob", "*"))
+    recursive = bool(payload.get("recursive", True))
+    case_sensitive = bool(payload.get("case_sensitive", False))
+    use_regex = bool(payload.get("use_regex", False))
+    limit = max(1, int(payload.get("limit", 50)))
+
+    flags = 0 if case_sensitive else re.IGNORECASE
+    matcher = re.compile(pattern, flags) if use_regex else None
+    needle = pattern if case_sensitive else pattern.lower()
+
+    iterator = base_path.rglob("*") if recursive else base_path.glob("*")
+    matches: list[str] = []
+    truncated = False
+    for candidate in iterator:
+        if not candidate.is_file():
+            continue
+        relative = candidate.relative_to(workspace_root).as_posix()
+        if not (fnmatch.fnmatch(relative, glob_pattern) or fnmatch.fnmatch(candidate.name, glob_pattern)):
+            continue
+        try:
+            lines = candidate.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            continue
+        for line_number, line in enumerate(lines, start=1):
+            haystack = line if case_sensitive else line.lower()
+            found = bool(matcher.search(line)) if matcher is not None else needle in haystack
+            if not found:
+                continue
+            matches.append(f"{relative}:{line_number}:{line}")
+            if len(matches) >= limit:
+                truncated = True
+                break
+        if truncated:
+            break
+    if not matches:
+        return "(no matches)"
+    if truncated:
+        matches.append(f"... ({limit} matches shown)")
+    return "\n".join(matches)[: ctx.runtime.settings.runtime.max_tool_output_chars]
 
 
 def _line_diff_stats(before: str, after: str) -> tuple[int, int]:
@@ -136,6 +226,44 @@ def edit_file(ctx: Any, payload: dict[str, Any]) -> dict[str, Any] | str:
 
 
 def register_filesystem_tools(registry) -> None:
+    registry.register(
+        ToolDefinition(
+            name="glob",
+            description="Search for files or directories by glob pattern inside the workspace.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "match": {"type": "string", "enum": ["files", "dirs", "all"]},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["pattern"],
+            },
+            handler=glob_search,
+        )
+    )
+    registry.register(
+        ToolDefinition(
+            name="grep",
+            description="Search file contents inside the workspace and return matching lines.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                    "glob": {"type": "string"},
+                    "recursive": {"type": "boolean"},
+                    "case_sensitive": {"type": "boolean"},
+                    "use_regex": {"type": "boolean"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["pattern"],
+            },
+            handler=grep_search,
+        )
+    )
     registry.register(
         ToolDefinition(
             name="read_file",

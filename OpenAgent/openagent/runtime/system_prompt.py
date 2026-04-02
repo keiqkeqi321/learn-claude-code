@@ -43,6 +43,24 @@ class SystemPromptBuilder:
             "- If the user asks which model or provider you are using, answer with these configured values.\n"
             "- Do not claim to be Claude, ChatGPT, GPT, Gemini, or any other model/vendor unless that exactly matches the configured runtime values above."
         )
+        tool_selection_guidance = (
+            "Tool selection rules:\n"
+            "- Prefer dedicated tools over `bash` whenever a relevant tool exists.\n"
+            "- Use `read_file` instead of shell commands such as `cat`, `head`, `tail`, or `sed` for reading files.\n"
+            "- Use `edit_file` instead of shell text replacement via `sed` or `awk`.\n"
+            "- Use `write_file` instead of shell redirection or heredocs for file creation.\n"
+            "- Use `glob` instead of shell file discovery commands such as `find`, `ls`, or recursive directory listings.\n"
+            "- Use `grep` instead of shell content search commands such as `grep` or `rg`.\n"
+            "- Reserve `bash` for system commands and terminal operations that truly require shell execution.\n"
+            "- If you are unsure and a dedicated tool exists, use the dedicated tool first."
+        )
+        workflow_guidance = (
+            "Workflow rules:\n"
+            "- Use `TodoWrite` to break down meaningful work and keep progress visible to the user.\n"
+            "- Mark each todo item complete as soon as it is done; do not batch completions.\n"
+            "- When multiple tool calls are independent, prefer emitting them in the same turn.\n"
+            "- Do not batch dependent tool calls; sequence them when later inputs depend on earlier results."
+        )
         if actor == "lead":
             return (
                 f"{base_prompt}\n\n"
@@ -52,6 +70,8 @@ class SystemPromptBuilder:
                 "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
                 f"{identity_guidance}\n"
                 f"{mode_guidance}\n"
+                f"{tool_selection_guidance}\n"
+                f"{workflow_guidance}\n"
                 f"{environment_guidance}\n"
                 f"Available skills:\n{self.runtime.skill_loader.descriptions()}"
             )
@@ -63,6 +83,8 @@ class SystemPromptBuilder:
             "While idle you may be resumed by inbox messages or unclaimed tasks.\n"
             f"{identity_guidance}\n"
             f"{mode_guidance}\n"
+            f"{tool_selection_guidance}\n"
+            f"{workflow_guidance}\n"
             f"{environment_guidance}\n"
             f"Available skills:\n{self.runtime.skill_loader.descriptions()}"
         )

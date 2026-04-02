@@ -9,6 +9,8 @@ EXECUTION_MODE_ORDER = ("shortcuts", "plan", "accept_edits", "yolo")
 NON_YOLO_EXECUTION_MODES = ("shortcuts", "plan", "accept_edits")
 READ_ONLY_TOOL_NAMES = frozenset(
     {
+        "glob",
+        "grep",
         "read_file",
         "load_skill",
         "compress",
