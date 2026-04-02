@@ -606,6 +606,7 @@ class OpenAgentRuntime:
                     session.messages.append(make_user_text_message(f"<inbox>{json.dumps(inbox, ensure_ascii=False, indent=2)}</inbox>"))
 
                 callback = text_callback
+                stream_flush_callback = getattr(text_callback, "finish", None) if text_callback is not None else None
                 if text_callback is not None or should_interrupt is not None:
                     def interruptible_callback(text: str) -> None:
                         self._raise_if_interrupted(should_interrupt)
@@ -621,6 +622,8 @@ class OpenAgentRuntime:
                     text_callback=callback,
                 )
                 self._raise_if_interrupted(should_interrupt)
+                if callable(stream_flush_callback):
+                    stream_flush_callback()
                 session.latest_turn_id = uuid.uuid4().hex[:8]
                 if not turn.has_tool_calls():
                     assistant_message = turn.as_message()

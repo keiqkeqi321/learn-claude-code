@@ -667,6 +667,69 @@ class RuntimeToolOutputTests(unittest.TestCase):
         tool_calls_after_bash = [item for item in assistant_with_bash["content"] if item.get("type") == "tool_call"]
         self.assertEqual([item["name"] for item in tool_calls_after_bash], ["bash"])
 
+    def test_agent_loop_flushes_streamed_text_before_tool_execution(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(
+            runtime=SimpleNamespace(max_agent_rounds=4, token_threshold=999999, max_tool_output_chars=5000),
+            provider=SimpleNamespace(max_tokens=1024),
+        )
+        runtime.background_manager = SimpleNamespace(drain=lambda: [])
+        runtime.bus = SimpleNamespace(read_inbox=lambda actor: [])
+        runtime.compact_manager = SimpleNamespace(auto_compact=lambda session_id, messages: messages)
+        runtime.todo_manager = SimpleNamespace(has_open_items=lambda session: False)
+        runtime.session_manager = SimpleNamespace(save=lambda session: None)
+        runtime.transcript_store = SimpleNamespace(append=lambda *args, **kwargs: None)
+        runtime.print_tool_event = lambda *args, **kwargs: None
+        runtime.build_system_prompt = lambda: "system"
+        runtime._capture_turn_file_changes = lambda session: None
+
+        order: list[tuple[str, str]] = []
+
+        class _Registry:
+            def schemas(self):
+                return []
+
+            def execute(self, ctx, name, payload):
+                order.append(("tool", name))
+                return "ok"
+
+        class _Streamer:
+            def __call__(self, text: str):
+                order.append(("text", text))
+
+            def finish(self):
+                order.append(("flush", ""))
+
+        turns = iter(
+            [
+                AssistantTurn(
+                    stop_reason="tool_use",
+                    text_blocks=["I will inspect the workspace."],
+                    tool_calls=[ToolCall("call-1", "bash", {"command": "pwd"})],
+                ),
+                AssistantTurn(
+                    stop_reason="end_turn",
+                    text_blocks=["Done."],
+                ),
+            ]
+        )
+
+        def fake_complete(system_prompt, messages, tools, text_callback=None):
+            turn = next(turns)
+            if turn.text_blocks and text_callback is not None:
+                text_callback(turn.text_blocks[0])
+            return turn
+
+        runtime.complete = fake_complete
+        runtime.registry = _Registry()
+        session = AgentSession(id="session-1")
+
+        result = OpenAgentRuntime.run_turn(runtime, session, "inspect", text_callback=_Streamer())
+
+        self.assertEqual(result, "Done.")
+        self.assertLess(order.index(("text", "I will inspect the workspace.")), order.index(("flush", "")))
+        self.assertLess(order.index(("flush", "")), order.index(("tool", "bash")))
+
 
 if __name__ == "__main__":
     unittest.main()
