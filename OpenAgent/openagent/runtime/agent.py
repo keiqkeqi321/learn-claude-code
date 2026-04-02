@@ -27,18 +27,15 @@ from openagent.providers.base import LLMProvider
 from openagent.providers.openai_provider import OpenAIProvider
 from openagent.runtime.compact import CompactManager, estimate_tokens, microcompact
 from openagent.runtime.execution_mode import (
-    ACCEPT_EDITS_BADGE,
     AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
-    is_mode_escalation,
     MODE_SWITCH_TOOL_NAME,
     NON_YOLO_EXECUTION_MODES,
-    normalize_execution_mode,
     execution_mode_spec,
-    tool_block_message,
 )
 from openagent.runtime.events import ToolExecutionContext
 from openagent.runtime.messages import make_tool_result_message, make_user_text_message
+from openagent.runtime.permissions import PermissionManager
 from openagent.runtime.session import AgentSession, SessionManager
 from openagent.runtime.teammate import TeammateRuntimeManager
 from openagent.runtime.tool_events import ToolEventRenderer
@@ -46,7 +43,7 @@ from openagent.skills.loader import SkillLoader
 from openagent.storage.inbox import InboxStore
 from openagent.storage.jobs import JobStore
 from openagent.storage.sessions import SessionStore
-from openagent.storage.common import atomic_write_text, read_json, write_json
+from openagent.storage.common import atomic_write_text
 from openagent.storage.tasks import TaskStore
 from openagent.storage.team import TeamStore
 from openagent.storage.tool_logs import ToolLogStore
@@ -117,6 +114,7 @@ class OpenAgentRuntime:
         self.execution_mode = DEFAULT_EXECUTION_MODE
         self.authorization_request_handler = None
         self.mode_switch_request_handler = None
+        self.permission_manager = PermissionManager(self)
         self._workspace_authorized_tools = self._load_workspace_authorizations()
         self._once_authorized_tools: dict[str, int] = {}
         self.provider = self._make_provider()
@@ -158,6 +156,13 @@ class OpenAgentRuntime:
             renderer = ToolEventRenderer(self)
             self.tool_event_renderer = renderer
         return renderer
+
+    def _permission_manager(self) -> PermissionManager:
+        manager = getattr(self, "permission_manager", None)
+        if manager is None:
+            manager = PermissionManager(self)
+            self.permission_manager = manager
+        return manager
 
     def print_tool_event(self, actor: str, tool_name: str, tool_input: dict[str, Any], output: Any) -> str:
         return self._tool_event_renderer().print_tool_event(actor, tool_name, tool_input, output)
@@ -249,158 +254,25 @@ class OpenAgentRuntime:
         return dict(self.settings.provider_profiles)
 
     def _workspace_authorizations_path(self) -> Path | None:
-        settings = getattr(self, "settings", None)
-        storage = getattr(settings, "storage", None)
-        data_dir = getattr(storage, "data_dir", None)
-        if not isinstance(data_dir, Path):
-            return None
-        return data_dir / self.WORKSPACE_PERMISSIONS_FILE
+        return self._permission_manager().workspace_authorizations_path()
 
     def _load_workspace_authorizations(self) -> set[str]:
-        path = self._workspace_authorizations_path()
-        if path is None:
-            return set()
-        try:
-            payload = read_json(path, {"authorized_tools": []})
-        except Exception:
-            return set()
-        if not isinstance(payload, dict):
-            return set()
-        raw_tools = payload.get("authorized_tools", [])
-        if not isinstance(raw_tools, list):
-            return set()
-        authorized: set[str] = set()
-        for item in raw_tools:
-            tool_name = str(item).strip()
-            if tool_name:
-                authorized.add(tool_name)
-        return authorized
+        return self._permission_manager().load_workspace_authorizations()
 
     def _persist_workspace_authorizations(self) -> None:
-        path = self._workspace_authorizations_path()
-        if path is None:
-            return
-        write_json(path, {"authorized_tools": sorted(self._workspace_authorized_tools)})
+        self._permission_manager().persist_workspace_authorizations()
 
     def authorize_tool_call(self, tool_name: str, payload: dict[str, Any], *, ctx=None) -> str | None:
-        if tool_name in {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}:
-            return None
-        if tool_name in self._workspace_authorized_tools:
-            return None
-        remaining = self._once_authorized_tools.get(tool_name, 0)
-        if remaining > 0:
-            if remaining == 1:
-                self._once_authorized_tools.pop(tool_name, None)
-            else:
-                self._once_authorized_tools[tool_name] = remaining - 1
-            return None
-        if getattr(ctx, "actor", None) == "subagent":
-            return None
-        if tool_name == "subagent":
-            return self._authorize_subagent_call(payload)
-        return tool_block_message(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE), tool_name)
+        return self._permission_manager().authorize_tool_call(tool_name, payload, ctx=ctx)
 
     def _authorize_subagent_call(self, payload: dict[str, Any]) -> str | None:
-        mode = normalize_execution_mode(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE))
-        if mode in {"accept_edits", "yolo"}:
-            return None
-        agent_type = str(payload.get("agent_type", "Explore")).strip() or "Explore"
-        spec = execution_mode_spec(mode)
-        if agent_type == "Explore":
-            return (
-                f"Blocked in {spec.title}: 'subagent' requires explicit user approval in read-only modes. "
-                "Call request_authorization if this subagent is necessary."
-            )
-        return (
-            f"Blocked in {spec.title}: 'subagent' with agent_type='{agent_type}' may edit workspace files. "
-            "Use agent_type='Explore'. Call request_mode_switch to "
-            f"{ACCEPT_EDITS_BADGE} accept edits on when the task has moved into implementation, "
-            "or request_authorization only for a one-off subagent run."
-        )
+        return self._permission_manager()._authorize_subagent_call(payload)
 
     def request_authorization(self, tool_name: str, reason: str, argument_summary: str = "") -> str:
-        normalized_tool = str(tool_name).strip()
-        if not normalized_tool:
-            return "Authorization request failed: tool_name is required."
-        if normalized_tool == AUTHORIZATION_TOOL_NAME:
-            return "Authorization not required for request_authorization."
-        if normalized_tool in self._workspace_authorized_tools:
-            return json.dumps(
-                {"status": "approved", "scope": "workspace", "tool_name": normalized_tool, "cached": True},
-                ensure_ascii=False,
-            )
-        handler = self.authorization_request_handler
-        if not callable(handler):
-            return "Authorization request failed: interactive approvals are unavailable in this session."
-        result = handler(
-            tool_name=normalized_tool,
-            reason=str(reason).strip(),
-            argument_summary=str(argument_summary).strip(),
-            execution_mode=getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE),
-        )
-        if not isinstance(result, dict):
-            return "Authorization request failed: invalid approval response."
-        status = str(result.get("status", "denied")).strip().lower()
-        scope = str(result.get("scope", "deny")).strip().lower()
-        if status == "approved":
-            if scope == "workspace":
-                self._workspace_authorized_tools.add(normalized_tool)
-                self._persist_workspace_authorizations()
-            elif scope == "once":
-                self._once_authorized_tools[normalized_tool] = self._once_authorized_tools.get(normalized_tool, 0) + 1
-        payload = {
-            "status": "approved" if status == "approved" else "denied",
-            "scope": scope,
-            "tool_name": normalized_tool,
-            "reason": str(result.get("reason", "")).strip(),
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        return self._permission_manager().request_authorization(tool_name, reason, argument_summary)
 
     def request_mode_switch(self, target_mode: str, reason: str = "") -> str:
-        normalized_target = normalize_execution_mode(target_mode)
-        if normalized_target == "yolo" or normalized_target not in NON_YOLO_EXECUTION_MODES:
-            return (
-                "Mode switch request failed: target_mode must be one of "
-                "'shortcuts', 'plan', or 'accept_edits'."
-            )
-        current_mode = normalize_execution_mode(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE))
-        if normalized_target == current_mode:
-            return json.dumps(
-                {
-                    "status": "unchanged",
-                    "current_mode": current_mode,
-                    "target_mode": normalized_target,
-                    "reason": "Already in requested mode.",
-                },
-                ensure_ascii=False,
-            )
-        if not is_mode_escalation(current_mode, normalized_target):
-            self.execution_mode = normalized_target
-            return json.dumps(
-                {
-                    "status": "approved",
-                    "current_mode": normalized_target,
-                    "target_mode": normalized_target,
-                    "reason": f"Switched directly to {execution_mode_spec(normalized_target).title}.",
-                },
-                ensure_ascii=False,
-            )
-        handler = self.mode_switch_request_handler
-        if not callable(handler):
-            return "Mode switch request failed: interactive mode switching is unavailable in this session."
-        result = handler(target_mode=normalized_target, reason=str(reason).strip(), current_mode=current_mode)
-        if not isinstance(result, dict):
-            return "Mode switch request failed: invalid mode switch response."
-        approved = bool(result.get("approved"))
-        active_mode = normalize_execution_mode(result.get("active_mode", current_mode))
-        self.execution_mode = active_mode
-        payload = {
-            "status": "approved" if approved else "denied",
-            "current_mode": active_mode,
-            "target_mode": normalized_target,
-            "reason": str(result.get("reason", "")).strip(),
-        }
-        return json.dumps(payload, ensure_ascii=False)
+        return self._permission_manager().request_mode_switch(target_mode, reason)
 
     def switch_provider_model(self, provider_name: str, model: str) -> str:
         normalized_provider = provider_name.strip().lower()
