@@ -382,6 +382,8 @@ class OpenAgentRuntime:
         try:
             if provider is not None and callable(getattr(provider, "count_tokens", None)):
                 used_tokens = int(provider.count_tokens(system_prompt, messages, tools))
+                if used_tokens <= 0 and (system_prompt.strip() or messages or tools):
+                    raise ValueError("Provider token counter returned a non-positive token count for a non-empty payload.")
                 counter_name = str(provider.token_counter_name())
             else:
                 raise RuntimeError("Provider token counting unavailable.")

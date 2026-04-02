@@ -503,6 +503,26 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertEqual(usage.max_tokens, 128_000)
         self.assertEqual(usage.counter_name, "estimate")
 
+    def test_context_window_usage_falls_back_when_provider_returns_zero_for_non_empty_payload(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(name="glm", model="glm-5.1", context_window_tokens=128_000))
+        runtime.provider = SimpleNamespace(
+            count_tokens=lambda system_prompt, messages, tools: 0,
+            token_counter_name=lambda: "anthropic_native",
+            context_window_tokens=lambda: 128_000,
+        )
+        runtime.registry = SimpleNamespace(schemas=lambda: [])
+        runtime.worker_registry = SimpleNamespace(schemas=lambda: [])
+        runtime.build_system_prompt = lambda actor="lead", role="lead coding agent": "system"
+        runtime.execution_mode = "accept_edits"
+        session = AgentSession(id="session-1", messages=[{"role": "user", "content": "hello world"}])
+
+        usage = OpenAgentRuntime.context_window_usage(runtime, session)
+
+        self.assertGreater(usage.used_tokens, 0)
+        self.assertEqual(usage.max_tokens, 128_000)
+        self.assertEqual(usage.counter_name, "estimate")
+
     def test_instantiate_provider_uses_provider_type_instead_of_profile_name(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
 
