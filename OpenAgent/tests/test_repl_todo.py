@@ -43,8 +43,26 @@ class ReplTodoTests(unittest.TestCase):
 
         self.assertEqual(
             runner.bottom_toolbar(),
-            [("fg:#94a3b8", "model: openai / gpt-5 | ctx: 20.0% (40.0k / 200.0k tokens)")],
+            [
+                ("fg:#94a3b8", "model: openai / gpt-5"),
+                ("fg:#64748b", " | "),
+                ("fg:#22c55e", "ctx: 20.0% (40.0k / 200.0k tokens)"),
+            ],
         )
+
+    def test_context_health_gradient_styles_follow_thresholds(self) -> None:
+        runner = TurnQueueRunner(SimpleNamespace(), SimpleNamespace(todo_items=[]), stable_prompt=True)
+
+        cases = [
+            (ContextWindowUsage(used_tokens=40, max_tokens=100), "fg:#22c55e"),
+            (ContextWindowUsage(used_tokens=60, max_tokens=100), "fg:#84cc16"),
+            (ContextWindowUsage(used_tokens=75, max_tokens=100), "fg:#f59e0b"),
+            (ContextWindowUsage(used_tokens=76, max_tokens=100), "fg:#ef4444"),
+        ]
+
+        for usage, expected_style in cases:
+            runner.runtime = SimpleNamespace(context_window_usage=lambda session, usage=usage: usage)
+            self.assertEqual(runner.current_context_style(), expected_style)
 
     def test_prompt_message_shows_open_todos_before_mode_and_prompt(self) -> None:
         session = SimpleNamespace(
@@ -122,9 +140,11 @@ class ReplTodoTests(unittest.TestCase):
         runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
 
         rendered = _render_prompt_text(runner.prompt_message())
+        context_fragments = [fragment for fragment in runner.prompt_message() if fragment[1] == "ctx: 32.0% (64.0k / 200.0k tokens)"]
 
         self.assertIn("ctx: 32.0% (64.0k / 200.0k tokens)", rendered)
         self.assertLess(rendered.index("ctx: 32.0% (64.0k / 200.0k tokens)"), rendered.index("accept edits on"))
+        self.assertEqual(context_fragments, [("fg:#22c55e", "ctx: 32.0% (64.0k / 200.0k tokens)")])
 
     def test_todo_manager_treats_cancelled_items_as_closed_and_hidden(self) -> None:
         session = SimpleNamespace(todo_items=[])

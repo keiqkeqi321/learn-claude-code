@@ -171,6 +171,10 @@ class TurnQueueRunner:
     )
     DONE_TEXT = "done"
     THINKING_FRAME_SECONDS = 0.25
+    CONTEXT_HEALTHY_STYLE = "fg:#22c55e"
+    CONTEXT_WARNING_STYLE = "fg:#84cc16"
+    CONTEXT_REDUCING_STYLE = "fg:#f59e0b"
+    CONTEXT_CRITICAL_STYLE = "fg:#ef4444"
 
     def __init__(self, runtime, session, *, stable_prompt: bool = False) -> None:
         self.runtime = runtime
@@ -415,7 +419,7 @@ class TurnQueueRunner:
             for style, line in todo_lines:
                 fragments.extend([panel_prefix, (style, line), ("", "\n")])
             if context_line:
-                fragments.extend([panel_prefix, ("fg:#7dd3fc", context_line), ("", "\n")])
+                fragments.extend([panel_prefix, (self.current_context_style(), context_line), ("", "\n")])
             for index, queue_line in enumerate(queue_lines, start=1):
                 fragments.extend([panel_prefix, ("fg:#94a3b8", f"queued {index}: {queue_line}"), ("", "\n")])
         fragments.append(panel_prefix)
@@ -461,6 +465,19 @@ class TurnQueueRunner:
             )
         return f"ctx: {self._format_token_count(usage.used_tokens)} tokens"
 
+    def current_context_style(self) -> str:
+        usage = self.current_context_usage()
+        percent = usage.usage_percent if usage is not None else None
+        if percent is None:
+            return "fg:#7dd3fc"
+        if percent <= 40.0:
+            return self.CONTEXT_HEALTHY_STYLE
+        if percent <= 60.0:
+            return self.CONTEXT_WARNING_STYLE
+        if percent <= 75.0:
+            return self.CONTEXT_REDUCING_STYLE
+        return self.CONTEXT_CRITICAL_STYLE
+
     def current_status_label(self) -> str:
         context_label = self.current_context_label()
         if not context_label:
@@ -468,7 +485,14 @@ class TurnQueueRunner:
         return f"{self.current_model_label()} | {context_label}"
 
     def bottom_toolbar(self):
-        return [("fg:#94a3b8", self.current_status_label())]
+        context_label = self.current_context_label()
+        if not context_label:
+            return [("fg:#94a3b8", self.current_model_label())]
+        return [
+            ("fg:#94a3b8", self.current_model_label()),
+            ("fg:#64748b", " | "),
+            (self.current_context_style(), context_label),
+        ]
 
     def current_execution_mode(self):
         return execution_mode_spec(self._execution_mode)
