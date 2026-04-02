@@ -227,6 +227,8 @@ class RuntimeToolOutputTests(unittest.TestCase):
         blocked = OpenAgentRuntime.authorize_tool_call(runtime, "edit_file", {"path": "demo.txt"})
 
         self.assertIn("workspace files are read-only", blocked)
+        self.assertIn("request_mode_switch", blocked)
+        self.assertIn("one-off edit", blocked)
         self.assertNotIn("! Yolo", blocked)
 
     def test_authorize_tool_call_allows_subagent_in_accept_edits_mode(self) -> None:
@@ -271,6 +273,8 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         self.assertIn("agent_type='general-purpose'", blocked)
         self.assertIn("Use agent_type='Explore'", blocked)
+        self.assertIn("request_mode_switch", blocked)
+        self.assertIn("one-off subagent run", blocked)
 
     def test_authorize_tool_call_allows_subagent_internal_tools(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
@@ -373,6 +377,17 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         self.assertIn('"status": "approved"', result)
         self.assertEqual(runtime.execution_mode, "accept_edits")
+
+    def test_request_mode_switch_downgrades_without_prompt(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+        runtime.mode_switch_request_handler = lambda **kwargs: self.fail("downgrade should not require prompting")
+
+        result = OpenAgentRuntime.request_mode_switch(runtime, "plan", "Implementation is complete")
+
+        self.assertIn('"status": "approved"', result)
+        self.assertIn('"current_mode": "plan"', result)
+        self.assertEqual(runtime.execution_mode, "plan")
 
     def test_build_system_prompt_drops_plan_guidance_after_mode_switch(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

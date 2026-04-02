@@ -56,8 +56,8 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "- Current mode: ? for shortcuts.\n"
             "- Keep workspace files read-only.\n"
             "- Use lightweight, read-only tools only.\n"
-            "- Call request_authorization before asking for edits or broader tool access.\n"
-            "- Call request_mode_switch to ask the user to move to shortcuts, plan, or accept_edits when needed."
+            "- Use request_authorization for one-off blocked tool calls.\n"
+            "- Use request_mode_switch when the task has clearly moved into planning or implementation."
         ),
     ),
     "plan": ExecutionModeSpec(
@@ -72,7 +72,8 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "- Keep workspace files read-only.\n"
             "- Inspect context with read-only tools when needed.\n"
             "- Return a concrete implementation plan before asking for a higher-permission mode.\n"
-            "- If execution is needed after planning, call request_mode_switch or request_authorization first."
+            "- Use request_mode_switch to move into accept_edits when the user confirms implementation.\n"
+            "- Use request_authorization only for isolated blocked tool calls that do not change the overall phase."
         ),
     ),
     "accept_edits": ExecutionModeSpec(
@@ -85,9 +86,8 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "Execution mode:\n"
             "- Current mode: \u23f5\u23f5 accept edits on.\n"
             "- You may edit workspace files with write_file and edit_file.\n"
-            "- Treat other tools as requiring explicit user approval.\n"
-            "- Call request_authorization before using a blocked non-edit tool.\n"
-            "- You may call request_mode_switch only for shortcuts, plan, or accept_edits."
+            "- Treat blocked non-edit tools as one-off exceptions that require request_authorization.\n"
+            "- Use request_mode_switch only to move back to shortcuts, plan, or remain in accept_edits.\n"
         ),
     ),
     "yolo": ExecutionModeSpec(
@@ -125,6 +125,14 @@ def execution_mode_status_text(mode: str | None) -> str:
     return f"{execution_mode_spec(mode).title}  (Shift+Tab to cycle)"
 
 
+def execution_mode_rank(mode: str | None) -> int:
+    return EXECUTION_MODE_ORDER.index(normalize_execution_mode(mode))
+
+
+def is_mode_escalation(current_mode: str | None, target_mode: str | None) -> bool:
+    return execution_mode_rank(target_mode) > execution_mode_rank(current_mode)
+
+
 def tool_block_message(mode: str | None, tool_name: str) -> str | None:
     spec = execution_mode_spec(mode)
     if spec.key == "yolo":
@@ -138,7 +146,8 @@ def tool_block_message(mode: str | None, tool_name: str) -> str | None:
     if tool_name in FILE_EDIT_TOOL_NAMES:
         return (
             f"Blocked in {spec.title}: workspace files are read-only. "
-            f"Call request_authorization or request_mode_switch to {ACCEPT_EDITS_BADGE} accept edits on."
+            f"Call request_mode_switch to {ACCEPT_EDITS_BADGE} accept edits on when the task has moved into "
+            "implementation. Use request_authorization only for a one-off edit."
         )
     return (
         f"Blocked in {spec.title}: '{tool_name}' requires broader tool access. "

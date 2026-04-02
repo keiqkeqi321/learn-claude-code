@@ -31,6 +31,7 @@ from openagent.runtime.execution_mode import (
     ACCEPT_EDITS_BADGE,
     AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
+    is_mode_escalation,
     MODE_SWITCH_TOOL_NAME,
     NON_YOLO_EXECUTION_MODES,
     normalize_execution_mode,
@@ -648,8 +649,9 @@ class OpenAgentRuntime:
             )
         return (
             f"Blocked in {spec.title}: 'subagent' with agent_type='{agent_type}' may edit workspace files. "
-            f"Use agent_type='Explore', call request_authorization, or request_mode_switch to "
-            f"{ACCEPT_EDITS_BADGE} accept edits on."
+            "Use agent_type='Explore'. Call request_mode_switch to "
+            f"{ACCEPT_EDITS_BADGE} accept edits on when the task has moved into implementation, "
+            "or request_authorization only for a one-off subagent run."
         )
 
     def request_authorization(self, tool_name: str, reason: str, argument_summary: str = "") -> str:
@@ -705,6 +707,17 @@ class OpenAgentRuntime:
                     "current_mode": current_mode,
                     "target_mode": normalized_target,
                     "reason": "Already in requested mode.",
+                },
+                ensure_ascii=False,
+            )
+        if not is_mode_escalation(current_mode, normalized_target):
+            self.execution_mode = normalized_target
+            return json.dumps(
+                {
+                    "status": "approved",
+                    "current_mode": normalized_target,
+                    "target_mode": normalized_target,
+                    "reason": f"Switched directly to {execution_mode_spec(normalized_target).title}.",
                 },
                 ensure_ascii=False,
             )
