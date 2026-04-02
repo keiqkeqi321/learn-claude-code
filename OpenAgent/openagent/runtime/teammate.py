@@ -20,6 +20,8 @@ class TeammateRuntimeManager:
         self.task_store = task_store
         self.request_tracker = request_tracker
         self.threads: dict[str, threading.Thread] = {}
+        self._stop_events: dict[str, threading.Event] = {}
+        self._stop_reasons: dict[str, str] = {}
         self._lock = threading.RLock()
         self._repair_state()
 
@@ -119,22 +121,86 @@ class TeammateRuntimeManager:
         member = self._find(name)
         if member and member.get("status") not in {"idle", "shutdown"}:
             return f"Error: '{name}' is currently {member['status']}"
+        self._reset_stop_request(name)
         self._upsert_member(name, role, "starting", "booting")
         thread = threading.Thread(target=self._loop, args=(name, role, prompt), daemon=True)
         thread.start()
         self.threads[name] = thread
         return f"Spawned '{name}' (role: {role})"
 
+    def _reset_stop_request(self, name: str) -> threading.Event:
+        with self._lock:
+            event = self._stop_events.get(name)
+            if event is None:
+                event = threading.Event()
+                self._stop_events[name] = event
+            else:
+                event.clear()
+            self._stop_reasons.pop(name, None)
+            return event
+
+    def _request_stop(self, name: str, reason: str) -> None:
+        with self._lock:
+            event = self._stop_events.get(name)
+            if event is None:
+                event = threading.Event()
+                self._stop_events[name] = event
+            self._stop_reasons[name] = reason
+            event.set()
+
+    def _stop_reason(self, name: str) -> str | None:
+        with self._lock:
+            event = self._stop_events.get(name)
+            if event is None or not event.is_set():
+                return None
+            return self._stop_reasons.get(name, "interrupt_requested")
+
+    def _shutdown_if_stop_requested(self, name: str, activity: str = "interrupt_requested") -> bool:
+        reason = self._stop_reason(name)
+        if reason is None:
+            return False
+        self._update_member(
+            name,
+            status="shutdown",
+            activity=activity,
+            shutdown_reason=reason,
+            current_task_id=None,
+        )
+        return True
+
+    def interrupt_active(self, reason: str = "lead_interrupt") -> int:
+        self._refresh_thread_health()
+        count = 0
+        config = self._load()
+        for member in config.get("members", []):
+            name = str(member.get("name", "")).strip()
+            if not name:
+                continue
+            thread = self.threads.get(name)
+            if thread is None or not thread.is_alive():
+                continue
+            if member.get("status") == "shutdown":
+                continue
+            self._request_stop(name, reason)
+            self._update_member(name, activity="interrupt_requested")
+            count += 1
+        return count
+
     def _loop(self, name: str, role: str, prompt: str) -> None:
         messages = [{"role": "user", "content": prompt}]
         registry = ToolRegistry()
         self.runtime.register_worker_tools(registry)
         system_prompt = self.runtime.build_system_prompt(actor=name, role=role)
+        stop_event = self._reset_stop_request(name)
         self._update_member(name, status="working", activity="starting_work_loop")
 
         try:
             while True:
+                if self._shutdown_if_stop_requested(name):
+                    return
                 for _ in range(self.runtime.settings.runtime.max_agent_rounds):
+                    if self._shutdown_if_stop_requested(name):
+                        return
                     self._update_member(name, status="working", activity="checking_inbox")
                     inbox = self.bus.read_inbox(name)
                     for message in inbox:
@@ -143,7 +209,14 @@ class TeammateRuntimeManager:
                         messages.append({"role": "user", "content": json.dumps(message, ensure_ascii=False)})
 
                     self._update_member(name, status="working", activity="waiting_for_model")
-                    turn = self.runtime.complete(system_prompt, messages, registry.schemas())
+                    turn = self.runtime.complete(
+                        system_prompt,
+                        messages,
+                        registry.schemas(),
+                        should_interrupt=lambda: self._stop_reason(name) is not None,
+                    )
+                    if self._shutdown_if_stop_requested(name, activity="interrupted_after_model"):
+                        return
                     messages.append(turn.as_message())
                     if not turn.has_tool_calls():
                         break
@@ -151,6 +224,8 @@ class TeammateRuntimeManager:
                     tool_results: list[dict] = []
                     idle_requested = False
                     for tool_call in turn.tool_calls:
+                        if self._shutdown_if_stop_requested(name, activity="interrupted_before_tool"):
+                            return
                         if tool_call.name == "idle":
                             idle_requested = True
                             self._update_member(name, status="working", activity="preparing_for_idle")
@@ -182,7 +257,9 @@ class TeammateRuntimeManager:
                 poll_total = max(self.runtime.settings.runtime.teammate_idle_timeout_seconds, 1)
                 poll_interval = max(self.runtime.settings.runtime.teammate_poll_interval_seconds, 1)
                 for _ in range(max(poll_total // poll_interval, 1)):
-                    time.sleep(poll_interval)
+                    if stop_event.wait(poll_interval):
+                        if self._shutdown_if_stop_requested(name):
+                            return
                     self._update_member(name, status="idle", activity="idle_polling")
                     inbox = self.bus.read_inbox(name)
                     if inbox:
@@ -218,6 +295,8 @@ class TeammateRuntimeManager:
                     return
                 self._update_member(name, status="working", activity="resuming_work")
         except Exception as exc:
+            if self._shutdown_if_stop_requested(name):
+                return
             self._update_member(
                 name,
                 status="shutdown",
@@ -232,6 +311,7 @@ class TeammateRuntimeManager:
         if message.get("type") != "shutdown_request":
             return False
         request_id = message.get("request_id")
+        self._request_stop(name, "shutdown_request")
         if request_id:
             self.request_tracker.mark_shutdown_response(request_id, "accepted")
             self.bus.send(name, "lead", "Shutting down.", "shutdown_response", {"request_id": request_id})

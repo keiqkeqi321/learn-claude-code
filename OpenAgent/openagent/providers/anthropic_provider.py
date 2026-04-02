@@ -5,7 +5,8 @@ from typing import Any
 from anthropic import Anthropic
 
 from openagent.config.models import ProviderSettings
-from openagent.providers.base import LLMProvider, TextCallback
+from openagent.providers.base import LLMProvider, StopChecker, TextCallback
+from openagent.runtime.interrupts import TurnInterrupted
 from openagent.runtime.messages import AssistantTurn, ToolCall
 
 
@@ -78,6 +79,7 @@ class AnthropicProvider(LLMProvider):
         tools: list[dict[str, Any]],
         max_tokens: int,
         text_callback: TextCallback | None = None,
+        stop_checker: StopChecker | None = None,
     ) -> AssistantTurn:
         request_kwargs = {
             "model": self.settings.model,
@@ -86,12 +88,19 @@ class AnthropicProvider(LLMProvider):
             "tools": tools,
             "max_tokens": max_tokens,
         }
-        if text_callback is None:
+        if text_callback is None and stop_checker is None:
             response = self.client.messages.create(**request_kwargs)
         else:
             with self.client.messages.stream(**request_kwargs) as stream:
+                if stop_checker is not None and stop_checker():
+                    raise TurnInterrupted("Interrupted by user.")
                 for text in stream.text_stream:
-                    text_callback(text)
+                    if stop_checker is not None and stop_checker():
+                        raise TurnInterrupted("Interrupted by user.")
+                    if text_callback is not None:
+                        text_callback(text)
+                if stop_checker is not None and stop_checker():
+                    raise TurnInterrupted("Interrupted by user.")
                 response = stream.get_final_message()
         text_blocks: list[str] = []
         tool_calls: list[ToolCall] = []

@@ -6,7 +6,8 @@ import urllib.request
 from typing import Any
 
 from openagent.config.models import ProviderSettings
-from openagent.providers.base import LLMProvider, ProviderError, TextCallback
+from openagent.providers.base import LLMProvider, ProviderError, StopChecker, TextCallback
+from openagent.runtime.interrupts import TurnInterrupted
 from openagent.runtime.messages import AssistantTurn, ToolCall
 
 try:
@@ -125,15 +126,17 @@ class OpenAIProvider(LLMProvider):
         tools: list[dict[str, Any]],
         max_tokens: int,
         text_callback: TextCallback | None = None,
+        stop_checker: StopChecker | None = None,
     ) -> AssistantTurn:
         url = f"{self.settings.base_url.rstrip('/')}/chat/completions"
+        should_stream = text_callback is not None or stop_checker is not None
         payload = {
             "model": self.settings.model,
             "messages": [{"role": "system", "content": system_prompt}] + _to_openai_messages(messages),
             "tools": [_schema_to_openai_tool(tool) for tool in tools],
             "tool_choice": "auto",
             "max_tokens": max_tokens,
-            "stream": bool(text_callback),
+            "stream": should_stream,
         }
         headers = {
             "Authorization": f"Bearer {self.settings.api_key}",
@@ -149,10 +152,10 @@ class OpenAIProvider(LLMProvider):
         )
         try:
             with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as response:
-                if text_callback is None:
+                if not should_stream:
                     body = json.loads(response.read().decode("utf-8"))
                 else:
-                    body = self._read_streaming_response(response, text_callback)
+                    body = self._read_streaming_response(response, text_callback, stop_checker=stop_checker)
         except urllib.error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="replace")
             raise ProviderError(f"OpenAI request failed: {exc.code} {details}") from exc
@@ -189,12 +192,20 @@ class OpenAIProvider(LLMProvider):
             raw_response=body,
         )
 
-    def _read_streaming_response(self, response, text_callback: TextCallback) -> dict[str, Any]:
+    def _read_streaming_response(
+        self,
+        response,
+        text_callback: TextCallback | None,
+        *,
+        stop_checker: StopChecker | None = None,
+    ) -> dict[str, Any]:
         aggregated_message: dict[str, Any] = {"role": "assistant", "content": "", "tool_calls": []}
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
 
         for raw_line in response:
+            if stop_checker is not None and stop_checker():
+                raise TurnInterrupted("Interrupted by user.")
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line or not line.startswith("data:"):
                 continue
@@ -209,14 +220,16 @@ class OpenAIProvider(LLMProvider):
             content = delta.get("content")
             if isinstance(content, str) and content:
                 aggregated_message["content"] += content
-                text_callback(content)
+                if text_callback is not None:
+                    text_callback(content)
             elif isinstance(content, list):
                 for item in content:
                     if item.get("type") == "text":
                         text = item.get("text", "")
                         if text:
                             aggregated_message["content"] += text
-                            text_callback(text)
+                            if text_callback is not None:
+                                text_callback(text)
 
             for tool_delta in delta.get("tool_calls", []):
                 index = int(tool_delta.get("index", 0))

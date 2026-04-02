@@ -21,7 +21,7 @@ from openagent.cli.prompting import (
     fallback_prompt_message,
     styled_prompt_message,
 )
-from openagent.runtime.agent import TurnInterrupted
+from openagent.runtime.interrupts import TurnInterrupted
 from openagent.runtime.compact import ContextWindowUsage
 from openagent.runtime.execution_mode import (
     DEFAULT_EXECUTION_MODE,
@@ -304,6 +304,12 @@ class TurnQueueRunner:
             if not self._active or self._interrupt_requested:
                 return False
             self._interrupt_requested = True
+        interrupter = getattr(self.runtime, "interrupt_active_teammates", None)
+        if callable(interrupter):
+            try:
+                interrupter(reason="lead_interrupt")
+            except Exception:
+                pass
         self._set_status("interrupting")
         return True
 

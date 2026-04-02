@@ -12,6 +12,7 @@ class ProviderError(RuntimeError):
 
 
 TextCallback = Callable[[str], None]
+StopChecker = Callable[[], bool]
 
 
 class LLMProvider(ABC):
@@ -23,6 +24,7 @@ class LLMProvider(ABC):
         tools: list[dict[str, Any]],
         max_tokens: int,
         text_callback: TextCallback | None = None,
+        stop_checker: StopChecker | None = None,
     ) -> AssistantTurn:
         raise NotImplementedError
 

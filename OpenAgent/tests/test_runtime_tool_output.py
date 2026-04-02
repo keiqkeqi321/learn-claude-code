@@ -714,7 +714,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
             ]
         )
 
-        def fake_complete(system_prompt, messages, tools, text_callback=None):
+        def fake_complete(system_prompt, messages, tools, text_callback=None, should_interrupt=None):
             turn = next(turns)
             if turn.text_blocks and text_callback is not None:
                 text_callback(turn.text_blocks[0])

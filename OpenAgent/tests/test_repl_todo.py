@@ -223,6 +223,19 @@ class ReplTodoTests(unittest.TestCase):
         self.assertTrue(runner.should_interrupt())
         self.assertEqual(runner._status, "interrupting")
 
+    def test_request_interrupt_propagates_to_active_teammates(self) -> None:
+        reasons: list[str] = []
+        runtime = SimpleNamespace(
+            interrupt_active_teammates=lambda reason="lead_interrupt": reasons.append(reason) or 1,
+        )
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+        runner._active = True
+
+        requested = runner.request_interrupt()
+
+        self.assertTrue(requested)
+        self.assertEqual(reasons, ["lead_interrupt"])
+
     def test_request_authorization_is_resolved_on_main_thread(self) -> None:
         runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
         runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)

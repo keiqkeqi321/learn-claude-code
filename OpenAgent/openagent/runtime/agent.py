@@ -31,6 +31,7 @@ from openagent.runtime.execution_mode import (
     NON_YOLO_EXECUTION_MODES,
 )
 from openagent.runtime.events import ToolExecutionContext
+from openagent.runtime.interrupts import TurnInterrupted
 from openagent.runtime.messages import make_tool_result_message, make_user_text_message
 from openagent.runtime.permissions import PermissionManager
 from openagent.runtime.session import AgentSession, SessionManager
@@ -56,12 +57,6 @@ from openagent.tools.subagent import register_subagent_tool
 from openagent.tools.tasks import register_task_tools
 from openagent.tools.team import register_team_tools
 from openagent.tools.todo import TodoManager, register_todo_tool
-
-
-class TurnInterrupted(RuntimeError):
-    pass
-
-
 class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
     TOOL_RESULT_PREVIEW_CHARS = 60
@@ -552,16 +547,28 @@ class OpenAgentRuntime:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         text_callback=None,
+        should_interrupt=None,
     ):
         last_error: Exception | None = None
+        callback = text_callback
+        if text_callback is not None or should_interrupt is not None:
+            def interruptible_callback(text: str) -> None:
+                self._raise_if_interrupted(should_interrupt)
+                if text_callback is not None:
+                    text_callback(text)
+                self._raise_if_interrupted(should_interrupt)
+
+            callback = interruptible_callback
         for _ in range(3):
+            self._raise_if_interrupted(should_interrupt)
             try:
                 return self.provider.complete(
                     system_prompt=system_prompt,
                     messages=messages,
                     tools=tools,
                     max_tokens=self.settings.provider.max_tokens,
-                    text_callback=text_callback,
+                    text_callback=callback,
+                    stop_checker=should_interrupt,
                 )
             except TurnInterrupted:
                 raise
@@ -571,6 +578,16 @@ class OpenAgentRuntime:
 
     def run_subagent(self, prompt: str, agent_type: str = "Explore") -> str:
         return self._subagent_runner().run_subagent(prompt, agent_type)
+
+    def interrupt_active_teammates(self, reason: str = "lead_interrupt") -> int:
+        manager = getattr(self, "team_manager", None)
+        interrupter = getattr(manager, "interrupt_active", None)
+        if not callable(interrupter):
+            return 0
+        try:
+            return int(interrupter(reason=reason))
+        except Exception:
+            return 0
 
     def compact_session(self, session: AgentSession) -> None:
         session.messages = self.compact_manager.auto_compact(session.id, session.messages)
@@ -605,21 +622,14 @@ class OpenAgentRuntime:
                 if inbox:
                     session.messages.append(make_user_text_message(f"<inbox>{json.dumps(inbox, ensure_ascii=False, indent=2)}</inbox>"))
 
-                callback = text_callback
                 stream_flush_callback = getattr(text_callback, "finish", None) if text_callback is not None else None
-                if text_callback is not None or should_interrupt is not None:
-                    def interruptible_callback(text: str) -> None:
-                        self._raise_if_interrupted(should_interrupt)
-                        if text_callback is not None:
-                            text_callback(text)
-                        self._raise_if_interrupted(should_interrupt)
-                    callback = interruptible_callback
 
                 turn = self.complete(
                     self.build_system_prompt(),
                     session.messages,
                     self.registry.schemas(),
-                    text_callback=callback,
+                    text_callback=text_callback,
+                    should_interrupt=should_interrupt,
                 )
                 self._raise_if_interrupted(should_interrupt)
                 if callable(stream_flush_callback):
@@ -694,6 +704,7 @@ class OpenAgentRuntime:
             self.session_manager.save(session)
             return final_text or "Stopped after max rounds."
         except TurnInterrupted:
+            self.interrupt_active_teammates(reason="lead_interrupt")
             session.pending_file_changes = []
             session.last_turn_file_changes = []
             self.session_manager.save(session)
