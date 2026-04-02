@@ -11,8 +11,6 @@
 from __future__ import annotations
 
 import json
-import platform
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -31,12 +29,12 @@ from openagent.runtime.execution_mode import (
     DEFAULT_EXECUTION_MODE,
     MODE_SWITCH_TOOL_NAME,
     NON_YOLO_EXECUTION_MODES,
-    execution_mode_spec,
 )
 from openagent.runtime.events import ToolExecutionContext
 from openagent.runtime.messages import make_tool_result_message, make_user_text_message
 from openagent.runtime.permissions import PermissionManager
 from openagent.runtime.session import AgentSession, SessionManager
+from openagent.runtime.system_prompt import SystemPromptBuilder
 from openagent.runtime.teammate import TeammateRuntimeManager
 from openagent.runtime.tool_events import ToolEventRenderer
 from openagent.skills.loader import SkillLoader
@@ -115,6 +113,7 @@ class OpenAgentRuntime:
         self.authorization_request_handler = None
         self.mode_switch_request_handler = None
         self.permission_manager = PermissionManager(self)
+        self.system_prompt_builder = SystemPromptBuilder(self)
         self._workspace_authorized_tools = self._load_workspace_authorizations()
         self._once_authorized_tools: dict[str, int] = {}
         self.provider = self._make_provider()
@@ -163,6 +162,13 @@ class OpenAgentRuntime:
             manager = PermissionManager(self)
             self.permission_manager = manager
         return manager
+
+    def _system_prompt_builder(self) -> SystemPromptBuilder:
+        builder = getattr(self, "system_prompt_builder", None)
+        if builder is None:
+            builder = SystemPromptBuilder(self)
+            self.system_prompt_builder = builder
+        return builder
 
     def print_tool_event(self, actor: str, tool_name: str, tool_input: dict[str, Any], output: Any) -> str:
         return self._tool_event_renderer().print_tool_event(actor, tool_name, tool_input, output)
@@ -424,66 +430,13 @@ class OpenAgentRuntime:
         return f"Submitted plan request {request['request_id']}"
 
     def _environment_guidance(self) -> str:
-        os_name = platform.system() or sys.platform
-        shell_line = "PowerShell-compatible command runner" if sys.platform == "win32" else "system shell command runner"
-        bash_hint = (
-            "When using the `bash` tool on Windows, prefer PowerShell commands such as "
-            "`Get-ChildItem`, `Get-Content`, `Select-String`, and `Select-Object`. "
-            "Do not assume Unix commands like `ls`, `find -name`, `head`, `grep`, or `/dev/null` are available."
-            if sys.platform == "win32"
-            else "When using the `bash` tool on Unix-like systems, standard shell commands are available."
-        )
-        return (
-            "Execution environment:\n"
-            f"- OS: {os_name}\n"
-            f"- Shell: {shell_line}\n"
-            f"- Workspace: {self.settings.workspace_root}\n"
-            f"- Active provider: {self.settings.provider.name}\n"
-            f"- Active model: {self.settings.provider.model}\n"
-            "Tool behavior:\n"
-            f"- {bash_hint}"
-        )
+        return self._system_prompt_builder().environment_guidance()
 
     def build_system_prompt(self, actor: str = "lead", role: str = "lead coding agent") -> str:
-        base_prompt = self._base_system_prompt()
-        environment_guidance = self._environment_guidance()
-        mode_guidance = execution_mode_spec(getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE)).guidance
-        identity_guidance = (
-            "Identity rules:\n"
-            f"- Your configured runtime provider is '{self.settings.provider.name}'.\n"
-            f"- Your configured runtime model is '{self.settings.provider.model}'.\n"
-            "- If the user asks which model or provider you are using, answer with these configured values.\n"
-            "- Do not claim to be Claude, ChatGPT, GPT, Gemini, or any other model/vendor unless that exactly matches the configured runtime values above."
-        )
-        if actor == "lead":
-            return (
-                f"{base_prompt}\n\n"
-                f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
-                "Use tools to solve coding tasks. Prefer task_create/task_update/task_list for longer work.\n"
-                "Use TodoWrite for short checklists. Use subagent for isolated subagent work. Use load_skill only when needed.\n"
-                "When collaborating, keep teammates informed through inbox messages and respect shutdown and plan protocols.\n"
-                f"{identity_guidance}\n"
-                f"{mode_guidance}\n"
-                f"{environment_guidance}\n"
-                f"Available skills:\n{self.skill_loader.descriptions()}"
-            )
-        return (
-            f"{base_prompt}\n\n"
-            f"You are '{actor}', role: {role}, operating inside workspace {self.settings.workspace_root}.\n"
-            "You are a persistent teammate following the s11 work/idle loop.\n"
-            "Use tools to complete current work, send messages when needed, and call idle when you have finished the current unit of work.\n"
-            "While idle you may be resumed by inbox messages or unclaimed tasks.\n"
-            f"{identity_guidance}\n"
-            f"{mode_guidance}\n"
-            f"{environment_guidance}\n"
-            f"Available skills:\n{self.skill_loader.descriptions()}"
-        )
+        return self._system_prompt_builder().build_system_prompt(actor=actor, role=role)
 
     def _base_system_prompt(self) -> str:
-        configured_prompt = self.settings.agent.system_prompt
-        if configured_prompt:
-            return configured_prompt
-        return self.DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(name=self.settings.agent.name)
+        return self._system_prompt_builder().base_system_prompt()
 
     def create_session(self) -> AgentSession:
         return self.session_manager.create()
