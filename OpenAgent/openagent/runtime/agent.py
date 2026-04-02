@@ -34,6 +34,7 @@ from openagent.runtime.events import ToolExecutionContext
 from openagent.runtime.messages import make_tool_result_message, make_user_text_message
 from openagent.runtime.permissions import PermissionManager
 from openagent.runtime.session import AgentSession, SessionManager
+from openagent.runtime.subagent_runner import SubagentRunner
 from openagent.runtime.system_prompt import SystemPromptBuilder
 from openagent.runtime.teammate import TeammateRuntimeManager
 from openagent.runtime.tool_events import ToolEventRenderer
@@ -47,7 +48,7 @@ from openagent.storage.team import TeamStore
 from openagent.storage.tool_logs import ToolLogStore
 from openagent.storage.transcripts import TranscriptStore
 from openagent.tools.background import BackgroundManager, register_background_tools
-from openagent.tools.filesystem import edit_file, read_file, register_filesystem_tools, write_file
+from openagent.tools.filesystem import register_filesystem_tools
 from openagent.tools.mcp import register_mcp_tools
 from openagent.tools.registry import ToolDefinition, ToolRegistry
 from openagent.tools.shell import register_shell_tool
@@ -113,6 +114,7 @@ class OpenAgentRuntime:
         self.authorization_request_handler = None
         self.mode_switch_request_handler = None
         self.permission_manager = PermissionManager(self)
+        self.subagent_runner = SubagentRunner(self)
         self.system_prompt_builder = SystemPromptBuilder(self)
         self._workspace_authorized_tools = self._load_workspace_authorizations()
         self._once_authorized_tools: dict[str, int] = {}
@@ -169,6 +171,13 @@ class OpenAgentRuntime:
             builder = SystemPromptBuilder(self)
             self.system_prompt_builder = builder
         return builder
+
+    def _subagent_runner(self) -> SubagentRunner:
+        runner = getattr(self, "subagent_runner", None)
+        if runner is None:
+            runner = SubagentRunner(self)
+            self.subagent_runner = runner
+        return runner
 
     def print_tool_event(self, actor: str, tool_name: str, tool_input: dict[str, Any], output: Any) -> str:
         return self._tool_event_renderer().print_tool_event(actor, tool_name, tool_input, output)
@@ -474,101 +483,7 @@ class OpenAgentRuntime:
         raise RuntimeError(f"Provider call failed after retries: {last_error}")
 
     def run_subagent(self, prompt: str, agent_type: str = "Explore") -> str:
-        registry = ToolRegistry()
-        register_shell_tool(registry)
-        registry.register(
-            ToolDefinition(
-                name="read_file",
-                description="Read file contents.",
-                input_schema={
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
-                },
-                handler=read_file,
-            )
-        )
-        if agent_type != "Explore":
-            registry.register(
-                ToolDefinition(
-                    name="write_file",
-                    description="Write content to a file.",
-                    input_schema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                            "content": {"type": "string"},
-                        },
-                        "required": ["path", "content"],
-                    },
-                    handler=write_file,
-                )
-            )
-            registry.register(
-                ToolDefinition(
-                    name="edit_file",
-                    description="Replace exact text in a file once.",
-                    input_schema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                            "old_text": {"type": "string"},
-                            "new_text": {"type": "string"},
-                        },
-                        "required": ["path", "old_text", "new_text"],
-                    },
-                    handler=edit_file,
-                )
-            )
-        registry.register(
-            ToolDefinition(
-                name="load_skill",
-                description="Load specialized knowledge by skill name.",
-                input_schema={
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}},
-                    "required": ["name"],
-                },
-                handler=lambda ctx, payload: self.skill_loader.load(payload["name"]),
-            )
-        )
-        capability_guidance = (
-            "You are in Explore mode. Use read-only tools only: `bash`, `read_file`, and `load_skill`. "
-            "Do not attempt workspace edits."
-            if agent_type == "Explore"
-            else "You are in general-purpose mode. In addition to read-only tools, you may use `write_file` and `edit_file` when needed."
-        )
-        messages = [make_user_text_message(prompt)]
-        system_prompt = (
-            f"You are an isolated subagent working in {self.settings.workspace_root}. "
-            "Keep the main context clean. Do the work, then return a concise summary.\n"
-            f"{capability_guidance}\n\n"
-            f"{self._environment_guidance()}"
-        )
-        final_text = "(subagent failed)"
-        for _ in range(self.settings.runtime.max_subagent_rounds):
-            turn = self.complete(system_prompt, messages, registry.schemas())
-            messages.append(turn.as_message())
-            if not turn.has_tool_calls():
-                text = "\n".join(turn.text_blocks).strip()
-                return text or "(no summary)"
-            results: list[dict[str, Any]] = []
-            ctx = ToolExecutionContext(runtime=self, session=None, actor="subagent", trace_id=f"subagent-{uuid.uuid4().hex[:8]}")
-            for tool_call in turn.tool_calls:
-                try:
-                    output = registry.execute(ctx, tool_call.name, tool_call.input)
-                except Exception as exc:
-                    output = f"Error: {exc}"
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_call_id": tool_call.id,
-                        "content": str(output),
-                    }
-                )
-            messages.append(make_tool_result_message(results))
-            final_text = "\n".join(turn.text_blocks).strip() or final_text
-        return final_text
+        return self._subagent_runner().run_subagent(prompt, agent_type)
 
     def compact_session(self, session: AgentSession) -> None:
         session.messages = self.compact_manager.auto_compact(session.id, session.messages)
