@@ -29,6 +29,7 @@ def safe_path(workspace_root: Path, relative_path: str) -> Path:
     Raises:
         ValueError: 如果路径尝试逃逸工作空间。
     """
+    workspace_root = workspace_root.resolve()
     path = (workspace_root / relative_path).resolve()
     if not path.is_relative_to(workspace_root):
         raise ValueError(f"Path escapes workspace: {relative_path}")

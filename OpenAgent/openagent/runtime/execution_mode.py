@@ -24,6 +24,17 @@ READ_ONLY_TOOL_NAMES = frozenset(
     }
 )
 FILE_EDIT_TOOL_NAMES = frozenset({"write_file", "edit_file"})
+TASK_MUTATION_TOOL_NAMES = frozenset({"task_create", "task_update", "claim_task"})
+TEAM_COLLAB_TOOL_NAMES = frozenset(
+    {
+        "spawn_teammate",
+        "send_message",
+        "read_inbox",
+        "broadcast",
+        "shutdown_request",
+        "plan_approval",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +99,8 @@ EXECUTION_MODES: dict[str, ExecutionModeSpec] = {
             "Execution mode:\n"
             "- Current mode: \u23f5\u23f5 accept edits on.\n"
             "- You may edit workspace files with write_file and edit_file.\n"
+            "- You may also create, update, and claim persistent tasks.\n"
+            "- You may also use agent-team collaboration tools such as teammate spawn, inbox, and messaging.\n"
             "- Treat blocked non-edit tools as one-off exceptions that require request_authorization.\n"
             "- Use request_mode_switch only to move back to shortcuts, plan, or remain in accept_edits.\n"
         ),
@@ -145,11 +158,27 @@ def tool_block_message(mode: str | None, tool_name: str) -> str | None:
         return None
     if spec.key == "accept_edits" and tool_name in FILE_EDIT_TOOL_NAMES:
         return None
+    if spec.key == "accept_edits" and tool_name in TASK_MUTATION_TOOL_NAMES:
+        return None
+    if spec.key == "accept_edits" and tool_name in TEAM_COLLAB_TOOL_NAMES:
+        return None
     if tool_name in FILE_EDIT_TOOL_NAMES:
         return (
             f"Blocked in {spec.title}: workspace files are read-only. "
             f"Call request_mode_switch to {ACCEPT_EDITS_BADGE} accept edits on when the task has moved into "
             "implementation. Use request_authorization only for a one-off edit."
+        )
+    if tool_name in TASK_MUTATION_TOOL_NAMES:
+        return (
+            f"Blocked in {spec.title}: persistent task mutations are not allowed in this mode. "
+            f"Call request_mode_switch to {ACCEPT_EDITS_BADGE} accept edits on when the task has moved into "
+            "implementation, or use request_authorization for a one-off task mutation."
+        )
+    if tool_name in TEAM_COLLAB_TOOL_NAMES:
+        return (
+            f"Blocked in {spec.title}: agent-team collaboration tools are not allowed in this mode. "
+            f"Call request_mode_switch to {ACCEPT_EDITS_BADGE} accept edits on when the task has moved into "
+            "implementation, or use request_authorization for a one-off collaboration action."
         )
     return (
         f"Blocked in {spec.title}: '{tool_name}' requires broader tool access. "

@@ -250,6 +250,78 @@ class RuntimeToolOutputTests(unittest.TestCase):
 
         self.assertIsNone(allowed)
 
+    def test_authorize_tool_call_allows_task_mutations_in_accept_edits_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        created = OpenAgentRuntime.authorize_tool_call(runtime, "task_create", {"subject": "Analyze folding system"})
+        updated = OpenAgentRuntime.authorize_tool_call(runtime, "task_update", {"task_id": 1, "status": "in_progress"})
+        claimed = OpenAgentRuntime.authorize_tool_call(runtime, "claim_task", {"task_id": 1})
+
+        self.assertIsNone(created)
+        self.assertIsNone(updated)
+        self.assertIsNone(claimed)
+
+    def test_authorize_tool_call_allows_team_collaboration_tools_in_accept_edits_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "accept_edits"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        spawned = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "spawn_teammate",
+            {"name": "Analyst", "role": "算法分析师", "prompt": "Analyze the folding system"},
+        )
+        messaged = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "send_message",
+            {"to": "Analyst", "content": "Focus on crease generation"},
+        )
+        inbox = OpenAgentRuntime.authorize_tool_call(runtime, "read_inbox", {})
+        broadcast = OpenAgentRuntime.authorize_tool_call(runtime, "broadcast", {"content": "Status check"})
+        shutdown = OpenAgentRuntime.authorize_tool_call(runtime, "shutdown_request", {"teammate": "Analyst"})
+        approval = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "plan_approval",
+            {"request_id": "req-1", "approve": True, "feedback": "Looks good"},
+        )
+
+        self.assertIsNone(spawned)
+        self.assertIsNone(messaged)
+        self.assertIsNone(inbox)
+        self.assertIsNone(broadcast)
+        self.assertIsNone(shutdown)
+        self.assertIsNone(approval)
+
+    def test_authorize_tool_call_blocks_task_mutations_in_plan_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        blocked = OpenAgentRuntime.authorize_tool_call(runtime, "task_create", {"subject": "Analyze folding system"})
+
+        self.assertIn("persistent task mutations are not allowed", blocked)
+        self.assertIn("request_mode_switch", blocked)
+
+    def test_authorize_tool_call_blocks_team_collaboration_tools_in_plan_mode(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.execution_mode = "plan"
+        runtime._workspace_authorized_tools = set()
+        runtime._once_authorized_tools = {}
+
+        blocked = OpenAgentRuntime.authorize_tool_call(
+            runtime,
+            "spawn_teammate",
+            {"name": "Analyst", "role": "算法分析师", "prompt": "Analyze the folding system"},
+        )
+
+        self.assertIn("agent-team collaboration tools are not allowed", blocked)
+        self.assertIn("request_mode_switch", blocked)
+
     def test_authorize_tool_call_blocks_explore_subagent_in_plan_mode(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.execution_mode = "plan"
@@ -580,6 +652,81 @@ class RuntimeToolOutputTests(unittest.TestCase):
             self.assertEqual(session.undo_stack, [])
             self.assertEqual(session.last_turn_file_changes, [])
             self.assertIn("Undid 1 file change", message)
+
+    def test_undo_last_turn_normalizes_workspace_root_before_boundary_check(self) -> None:
+        class _FakeResolvedPath:
+            def __init__(self, value: str) -> None:
+                self.value = value
+
+            def resolve(self):
+                return self
+
+            def __truediv__(self, relative: str):
+                return _FakeJoinedPath(self.value, relative)
+
+            def is_relative_to(self, other) -> bool:
+                base = getattr(other, "value", getattr(other, "raw_value", str(other))).rstrip("/\\")
+                candidate = self.value.rstrip("/\\")
+                return candidate == base or candidate.startswith(base + "\\")
+
+            def exists(self) -> bool:
+                return True
+
+            def unlink(self) -> None:
+                return None
+
+        class _FakeJoinedPath:
+            def __init__(self, base_value: str, relative: str) -> None:
+                self.base_value = base_value.rstrip("/\\")
+                self.relative = relative
+
+            def resolve(self):
+                return _FakeResolvedPath(f"{self.base_value}\\{self.relative}")
+
+        class _FakeWorkspaceRoot:
+            def __init__(self, raw_value: str, resolved_value: str) -> None:
+                self.raw_value = raw_value
+                self.resolved_value = resolved_value
+
+            def resolve(self):
+                return _FakeResolvedPath(self.resolved_value)
+
+            def __truediv__(self, relative: str):
+                return _FakeJoinedPath(self.resolved_value, relative)
+
+            def __str__(self) -> str:
+                return self.raw_value
+
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(
+            workspace_root=_FakeWorkspaceRoot(
+                raw_value=r"C:\Users\KEQIKE~1\AppData\Local\Temp\tmpabcd",
+                resolved_value=r"C:\Users\keqikeqi321\AppData\Local\Temp\tmpabcd",
+            )
+        )
+        runtime.session_manager = SimpleNamespace(save=lambda session: None)
+        session = AgentSession(
+            id="session-1",
+            undo_stack=[
+                {
+                    "turn_id": "turn-1",
+                    "files": [
+                        {
+                            "path": "greet.py",
+                            "absolute_path": r"C:\Users\keqikeqi321\AppData\Local\Temp\tmpabcd\greet.py",
+                            "existed_before": True,
+                            "previous_content": "old\n",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        with patch("openagent.runtime.agent.atomic_write_text", return_value=None) as mock_write:
+            message = OpenAgentRuntime.undo_last_turn(runtime, session)
+
+        self.assertIn("Undid 1 file change", message)
+        mock_write.assert_called_once()
 
     def test_complete_does_not_retry_turn_interrupt(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

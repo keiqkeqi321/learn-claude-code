@@ -5,11 +5,59 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from openagent.tools.filesystem import edit_file, glob_search, grep_search, write_file
+from openagent.tools.filesystem import edit_file, glob_search, grep_search, safe_path, write_file
 from openagent.tools.registry import ToolDefinition, ToolRegistry
 
 
 class FilesystemToolTests(unittest.TestCase):
+    def test_safe_path_normalizes_workspace_root_before_boundary_check(self) -> None:
+        class _FakeResolvedPath:
+            def __init__(self, value: str) -> None:
+                self.value = value
+
+            def resolve(self):
+                return self
+
+            def __truediv__(self, relative: str):
+                return _FakeJoinedPath(self.value, relative)
+
+            def is_relative_to(self, other) -> bool:
+                base = getattr(other, "value", getattr(other, "raw_value", str(other))).rstrip("/\\")
+                candidate = self.value.rstrip("/\\")
+                return candidate == base or candidate.startswith(base + "\\")
+
+        class _FakeJoinedPath:
+            def __init__(self, base_value: str, relative: str) -> None:
+                self.base_value = base_value.rstrip("/\\")
+                self.relative = relative
+
+            def resolve(self):
+                return _FakeResolvedPath(f"{self.base_value}\\{self.relative}")
+
+        class _FakeWorkspaceRoot:
+            def __init__(self, raw_value: str, resolved_value: str) -> None:
+                self.raw_value = raw_value
+                self.resolved_value = resolved_value
+
+            def resolve(self):
+                return _FakeResolvedPath(self.resolved_value)
+
+            def __truediv__(self, relative: str):
+                return _FakeJoinedPath(self.resolved_value, relative)
+
+            def __str__(self) -> str:
+                return self.raw_value
+
+        resolved = safe_path(
+            _FakeWorkspaceRoot(
+                raw_value=r"C:\Users\KEQIKE~1\AppData\Local\Temp\tmpabcd",
+                resolved_value=r"C:\Users\keqikeqi321\AppData\Local\Temp\tmpabcd",
+            ),
+            "demo.txt",
+        )
+
+        self.assertEqual(resolved.value, r"C:\Users\keqikeqi321\AppData\Local\Temp\tmpabcd\demo.txt")
+
     def test_write_file_returns_diff_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

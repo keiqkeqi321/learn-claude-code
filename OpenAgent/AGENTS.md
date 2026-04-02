@@ -45,7 +45,7 @@ The runtime owns:
 - The REPL has four execution modes ordered by risk:
   - `? for shortcuts`: read-only workspace access
   - `⏸ plan mode on`: read-only plus planning-first behavior
-  - `⏵⏵ accept edits on`: file edits allowed, broader tools still blocked
+  - `⏵⏵ accept edits on`: file edits and persistent task mutations allowed, broader tools still blocked
   - `! Yolo`: full autonomy
 - `Shift+Tab` cycles execution modes in the REPL.
 - The active execution mode is shown under `openagent >>` with color-coded risk.

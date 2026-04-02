@@ -212,12 +212,13 @@ class OpenAgentRuntime:
         if not undo_stack:
             return "Nothing to undo."
         entry = undo_stack.pop()
+        workspace_root = self.settings.workspace_root.resolve()
         for item in reversed(entry.get("files", [])):
             relative_path = str(item.get("path", "")).strip()
             if not relative_path:
                 continue
-            path = (self.settings.workspace_root / relative_path).resolve()
-            if not path.is_relative_to(self.settings.workspace_root):
+            path = (workspace_root / relative_path).resolve()
+            if not path.is_relative_to(workspace_root):
                 raise ValueError(f"Undo path escapes workspace: {relative_path}")
             existed_before = bool(item.get("existed_before"))
             previous_content = str(item.get("previous_content", ""))
