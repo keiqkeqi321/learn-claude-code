@@ -107,6 +107,30 @@ class ReplTodoTests(unittest.TestCase):
         self.assertNotIn("todo (", rendered)
         self.assertEqual(rendered, f"│ ⏵⏵ accept edits on  (Shift+Tab to cycle)\n{PROMPT_BORDER}\n❯ ")
 
+    def test_prompt_message_shows_active_teammates_before_mode_and_prompt(self) -> None:
+        runtime = SimpleNamespace(
+            team_manager=SimpleNamespace(
+                active_member_summaries=lambda: [
+                    {
+                        "name": "Analyst",
+                        "role": "algorithm analyst",
+                        "status": "working",
+                        "activity": "running_tool:grep",
+                        "current_tool_name": "grep",
+                        "last_activity_at": 0.0,
+                    }
+                ],
+                _format_member_summary=lambda member: "Analyst (algorithm analyst): working [tool grep] View team logs: /teamlog Analyst",
+            )
+        )
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+
+        rendered = _render_prompt_text(runner.prompt_message())
+
+        self.assertIn("team (1 active)", rendered)
+        self.assertIn("View team logs: /teamlog Analyst", rendered)
+        self.assertLess(rendered.index("team (1 active)"), rendered.index("accept edits on  (Shift+Tab to cycle)"))
+
     def test_prompt_message_omits_cancelled_items_from_visible_todo_block(self) -> None:
         session = SimpleNamespace(
             todo_items=[

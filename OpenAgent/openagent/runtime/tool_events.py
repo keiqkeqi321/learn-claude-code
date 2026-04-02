@@ -29,6 +29,8 @@ class ToolEventRenderer:
         )
         if tool_name in self.SILENT_TOOL_NAMES:
             return log_entry["id"]
+        if actor != "lead":
+            return log_entry["id"]
         if not sys.stdout.isatty():
             return log_entry["id"]
         print()

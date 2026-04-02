@@ -16,6 +16,59 @@ from openagent.tools.registry import ToolDefinition
 
 
 class TeammateRuntimeTests(unittest.TestCase):
+    def test_list_all_and_render_log_show_team_log_entry_points(self) -> None:
+        class _MemoryTeamStore:
+            def __init__(self) -> None:
+                self.payload = {"team_name": "default", "members": []}
+                self.logs: dict[str, list[dict]] = {}
+
+            def load(self) -> dict:
+                return self.payload
+
+            def save(self, payload: dict) -> None:
+                self.payload = payload
+
+            def reset_log(self, name: str, payload: dict) -> None:
+                self.logs[name] = [payload]
+
+            def append_log(self, name: str, payload: dict) -> None:
+                self.logs.setdefault(name, []).append(payload)
+
+            def read_log(self, name: str) -> list[dict]:
+                return list(self.logs.get(name, []))
+
+        team_store = _MemoryTeamStore()
+        manager = TeammateRuntimeManager(
+            runtime=SimpleNamespace(),
+            team_store=team_store,
+            bus=SimpleNamespace(),
+            task_store=SimpleNamespace(),
+            request_tracker=SimpleNamespace(),
+        )
+
+        manager._upsert_member("Analyst", "algorithm analyst", "working", "running_tool:grep")
+        manager._update_member("Analyst", current_tool_log_id="abc123", current_task_id=7)
+        manager._append_log("Analyst", "assistant_message", {"content": "I will inspect crease generation."})
+        manager._append_log(
+            "Analyst",
+            "tool_call",
+            {
+                "tool_name": "grep",
+                "tool_input": {"pattern": "crease"},
+                "output_preview": "Found 12 matches",
+                "tool_log_id": "abc123",
+            },
+        )
+
+        roster = manager.list_all()
+        log_output = manager.render_log("Analyst")
+
+        self.assertIn("View team logs: /teamlog Analyst", roster)
+        self.assertIn("tool grep", roster)
+        self.assertIn("[team log Analyst]", log_output)
+        self.assertIn("assistant: I will inspect crease generation.", log_output)
+        self.assertIn("Tool log: /toollog abc123", log_output)
+
     def test_interrupt_active_stops_teammate_before_tool_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

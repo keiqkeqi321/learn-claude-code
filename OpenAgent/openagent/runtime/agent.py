@@ -254,6 +254,13 @@ class OpenAgentRuntime:
     def render_tool_log(self, log_id: str) -> str:
         return self._tool_event_renderer().render_tool_log(log_id)
 
+    def render_team_log(self, name: str) -> str:
+        manager = getattr(self, "team_manager", None)
+        renderer = getattr(manager, "render_log", None)
+        if not callable(renderer):
+            return f"Teammate '{name}' not found."
+        return renderer(name)
+
     def _make_provider(self) -> LLMProvider:
         return self._instantiate_provider(self.settings.provider)
 

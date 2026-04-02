@@ -30,6 +30,21 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertEqual(log_id, "todo-log")
         self.assertEqual(fake_stdout.getvalue(), "")
 
+    def test_teammate_tool_event_is_logged_but_not_printed(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.tool_log_store = SimpleNamespace(write=lambda **kwargs: {"id": "team-log"})
+
+        class _Stdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdout = _Stdout()
+        with patch("sys.stdout", fake_stdout):
+            log_id = OpenAgentRuntime.print_tool_event(runtime, "Analyst", "grep", {"pattern": "fold"}, "ok")
+
+        self.assertEqual(log_id, "team-log")
+        self.assertEqual(fake_stdout.getvalue(), "")
+
     def test_file_edit_tool_event_uses_compact_diffstat_output(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
         runtime.tool_log_store = SimpleNamespace(write=lambda **kwargs: {"id": "edit-log"})

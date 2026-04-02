@@ -13,6 +13,8 @@ UNSET = object()
 
 
 class TeammateRuntimeManager:
+    ACTIVE_STATUSES = {"starting", "working", "idle"}
+
     def __init__(self, runtime, team_store, bus, task_store, request_tracker):
         self.runtime = runtime
         self.team_store = team_store
@@ -69,6 +71,8 @@ class TeammateRuntimeManager:
                     member["shutdown_reason"] = None
                     member["current_task_id"] = None
                     member["last_error"] = None
+                    member["current_tool_name"] = None
+                    member["current_tool_log_id"] = None
                     self.team_store.save(config)
                     return
             config.setdefault("members", []).append(
@@ -82,6 +86,8 @@ class TeammateRuntimeManager:
                     "shutdown_reason": None,
                     "current_task_id": None,
                     "last_error": None,
+                    "current_tool_name": None,
+                    "current_tool_log_id": None,
                 }
             )
             self.team_store.save(config)
@@ -94,6 +100,8 @@ class TeammateRuntimeManager:
         activity: str | None = None,
         shutdown_reason: str | None = None,
         current_task_id: int | None | object = UNSET,
+        current_tool_name: str | None | object = UNSET,
+        current_tool_log_id: str | None | object = UNSET,
         last_error: str | None = None,
         touch_activity: bool = True,
     ) -> None:
@@ -110,6 +118,17 @@ class TeammateRuntimeManager:
                         member["shutdown_reason"] = shutdown_reason
                     if current_task_id is not UNSET:
                         member["current_task_id"] = current_task_id
+                    if current_tool_name is not UNSET:
+                        member["current_tool_name"] = current_tool_name
+                    elif activity is not None:
+                        if str(activity).startswith("running_tool:"):
+                            member["current_tool_name"] = str(activity).split(":", 1)[1]
+                        else:
+                            member["current_tool_name"] = None
+                    if current_tool_log_id is not UNSET:
+                        member["current_tool_log_id"] = current_tool_log_id
+                    elif activity is not None and not str(activity).startswith("running_tool:"):
+                        member["current_tool_log_id"] = None
                     if last_error is not None:
                         member["last_error"] = last_error
                     if touch_activity:
@@ -123,6 +142,16 @@ class TeammateRuntimeManager:
             return f"Error: '{name}' is currently {member['status']}"
         self._reset_stop_request(name)
         self._upsert_member(name, role, "starting", "booting")
+        self.team_store.reset_log(
+            name,
+            {
+                "type": "session_started",
+                "timestamp": now_ts(),
+                "name": name,
+                "role": role,
+                "prompt": prompt,
+            },
+        )
         thread = threading.Thread(target=self._loop, args=(name, role, prompt), daemon=True)
         thread.start()
         self.threads[name] = thread
@@ -193,6 +222,7 @@ class TeammateRuntimeManager:
         system_prompt = self.runtime.build_system_prompt(actor=name, role=role)
         stop_event = self._reset_stop_request(name)
         self._update_member(name, status="working", activity="starting_work_loop")
+        self._append_log(name, "user_message", {"content": prompt, "source": "prompt"})
 
         try:
             while True:
@@ -207,6 +237,7 @@ class TeammateRuntimeManager:
                         if self._handle_control_message(name, message):
                             return
                         messages.append({"role": "user", "content": json.dumps(message, ensure_ascii=False)})
+                        self._append_log(name, "user_message", {"content": message, "source": "inbox"})
 
                     self._update_member(name, status="working", activity="waiting_for_model")
                     turn = self.runtime.complete(
@@ -217,7 +248,9 @@ class TeammateRuntimeManager:
                     )
                     if self._shutdown_if_stop_requested(name, activity="interrupted_after_model"):
                         return
-                    messages.append(turn.as_message())
+                    assistant_message = turn.as_message()
+                    messages.append(assistant_message)
+                    self._append_log(name, "assistant_message", {"content": assistant_message.get("content")})
                     if not turn.has_tool_calls():
                         break
                     ctx = ToolExecutionContext(runtime=self.runtime, session=None, actor=name, trace_id=f"{name}-{int(time.time())}")
@@ -240,7 +273,18 @@ class TeammateRuntimeManager:
                             except Exception as exc:
                                 output = f"Error: {exc}"
                                 self._update_member(name, last_error=str(exc))
-                        self.runtime.print_tool_event(name, tool_call.name, tool_call.input, output)
+                        log_id = self.runtime.print_tool_event(name, tool_call.name, tool_call.input, output)
+                        self._update_member(name, current_tool_log_id=log_id)
+                        self._append_log(
+                            name,
+                            "tool_call",
+                            {
+                                "tool_name": tool_call.name,
+                                "tool_input": tool_call.input,
+                                "output_preview": self.runtime._compact_preview(str(output), limit=120),
+                                "tool_log_id": log_id,
+                            },
+                        )
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -249,6 +293,7 @@ class TeammateRuntimeManager:
                             }
                         )
                     messages.append(make_tool_result_message(tool_results))
+                    self._append_log(name, "tool_result_message", {"content": tool_results})
                     if idle_requested:
                         break
 
@@ -267,6 +312,7 @@ class TeammateRuntimeManager:
                             if self._handle_control_message(name, message):
                                 return
                             messages.append({"role": "user", "content": json.dumps(message, ensure_ascii=False)})
+                            self._append_log(name, "user_message", {"content": message, "source": "idle_inbox"})
                         self._update_member(name, status="working", activity="resuming_from_inbox")
                         resume = True
                         break
@@ -281,7 +327,16 @@ class TeammateRuntimeManager:
                                 "content": f"<auto-claimed>Task #{task['id']}: {task['subject']}\n{task.get('description', '')}</auto-claimed>",
                             }
                         )
+                        self._append_log(
+                            name,
+                            "user_message",
+                            {
+                                "content": f"Task #{task['id']}: {task['subject']}\n{task.get('description', '')}",
+                                "source": "auto_claimed",
+                            },
+                        )
                         messages.append({"role": "assistant", "content": f"Claimed task #{task['id']}. Working on it."})
+                        self._append_log(name, "assistant_message", {"content": f"Claimed task #{task['id']}. Working on it."})
                         resume = True
                         break
                 if not resume:
@@ -297,6 +352,7 @@ class TeammateRuntimeManager:
         except Exception as exc:
             if self._shutdown_if_stop_requested(name):
                 return
+            self._append_log(name, "runtime_error", {"error": str(exc)})
             self._update_member(
                 name,
                 status="shutdown",
@@ -323,6 +379,16 @@ class TeammateRuntimeManager:
             current_task_id=None,
         )
         return True
+
+    def _append_log(self, name: str, event_type: str, payload: dict) -> None:
+        self.team_store.append_log(
+            name,
+            {
+                "type": event_type,
+                "timestamp": now_ts(),
+                **payload,
+            },
+        )
 
     def _refresh_thread_health(self) -> None:
         with self._lock:
@@ -362,17 +428,94 @@ class TeammateRuntimeManager:
             return "No teammates."
         lines = [f"Team: {config.get('team_name', 'default')}"]
         for member in members:
-            detail = member.get("activity", "unknown")
-            extras: list[str] = [detail]
-            if member.get("current_task_id") is not None:
-                extras.append(f"task #{member['current_task_id']}")
-            if member.get("shutdown_reason"):
-                extras.append(f"reason={member['shutdown_reason']}")
-            last_seen = self._format_age(member.get("last_activity_at"))
-            lines.append(
-                f"  {member['name']} ({member['role']}): {member['status']} [{', '.join(extras)}] last_seen={last_seen}"
-            )
+            lines.append("  " + self._format_member_summary(member))
         return "\n".join(lines)
 
     def member_names(self) -> list[str]:
         return [member["name"] for member in self._load().get("members", [])]
+
+    def active_member_summaries(self) -> list[dict]:
+        self._refresh_thread_health()
+        members: list[dict] = []
+        for member in self._load().get("members", []):
+            if str(member.get("status", "")).strip() in self.ACTIVE_STATUSES:
+                members.append(dict(member))
+        return members
+
+    def render_log(self, name: str) -> str:
+        member = self._find(name)
+        entries = self.team_store.read_log(name)
+        if member is None and not entries:
+            return f"Teammate '{name}' not found."
+        lines = [f"[team log {name}]"]
+        if member is not None:
+            lines.extend(
+                [
+                    f"Role: {member.get('role', 'unknown')}",
+                    f"Status: {member.get('status', 'unknown')}",
+                    f"Activity: {self._format_activity(member.get('activity', 'unknown'))}",
+                ]
+            )
+        if not entries:
+            lines.append("No team log entries yet.")
+            return "\n".join(lines)
+        lines.append("Events:")
+        for entry in entries:
+            lines.extend(self._render_log_entry(entry))
+        return "\n".join(lines)
+
+    def _render_log_entry(self, entry: dict) -> list[str]:
+        event_type = str(entry.get("type", "event"))
+        if event_type == "session_started":
+            return [
+                f"- session started ({entry.get('role', 'unknown')})",
+                f"  prompt: {self._compact_text(str(entry.get('prompt', '')))}",
+            ]
+        if event_type == "user_message":
+            return [f"- user[{entry.get('source', 'message')}]: {self._compact_text(self._render_log_content(entry.get('content')))}"]
+        if event_type == "assistant_message":
+            return [f"- assistant: {self._compact_text(self._render_log_content(entry.get('content')))}"]
+        if event_type == "tool_call":
+            lines = [
+                f"- tool {entry.get('tool_name', 'unknown')}: {self._compact_text(json.dumps(entry.get('tool_input', {}), ensure_ascii=False))}",
+                f"  result: {self._compact_text(str(entry.get('output_preview', '(no output)')))}",
+            ]
+            tool_log_id = str(entry.get("tool_log_id", "")).strip()
+            if tool_log_id:
+                lines.append(f"  Tool log: /toollog {tool_log_id}")
+            return lines
+        if event_type == "runtime_error":
+            return [f"- runtime_error: {self._compact_text(str(entry.get('error', 'unknown error')))}"]
+        return [f"- {event_type}: {self._compact_text(json.dumps(entry, ensure_ascii=False))}"]
+
+    def _render_log_content(self, content) -> str:
+        if isinstance(content, (dict, list)):
+            return json.dumps(content, ensure_ascii=False)
+        return str(content)
+
+    def _compact_text(self, text: str, limit: int = 180) -> str:
+        compact = " ".join(str(text).split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3] + "..."
+
+    def _format_activity(self, activity: str) -> str:
+        raw = str(activity or "unknown").strip()
+        if raw.startswith("running_tool:"):
+            return f"tool {raw.split(':', 1)[1]}"
+        return raw.replace("_", " ")
+
+    def _format_member_summary(self, member: dict) -> str:
+        extras: list[str] = [self._format_activity(member.get("activity", "unknown"))]
+        current_tool = str(member.get("current_tool_name", "")).strip()
+        if current_tool and f"tool {current_tool}" not in extras:
+            extras.append(f"tool {current_tool}")
+        if member.get("current_task_id") is not None:
+            extras.append(f"task #{member['current_task_id']}")
+        if member.get("shutdown_reason"):
+            extras.append(f"reason={member['shutdown_reason']}")
+        last_seen = self._format_age(member.get("last_activity_at"))
+        return (
+            f"{member['name']} ({member['role']}): {member['status']} "
+            f"[{', '.join(extras)}] last_seen={last_seen} View team logs: /teamlog {member['name']}"
+        )

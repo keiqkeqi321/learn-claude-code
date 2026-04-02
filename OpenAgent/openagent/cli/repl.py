@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - prompt_toolkit may be unavailable in fal
 READ_ONLY_COMMAND_PREFIXES = (
     "/tasks",
     "/team",
+    "/teamlog",
     "/inbox",
     "/mcp",
     "/toollog",
@@ -415,6 +416,7 @@ class TurnQueueRunner:
         status_line = self._status_line()
         context_line = self.current_context_label()
         todo_lines = self._todo_lines()
+        team_lines = self._team_lines()
         queue_lines = self._queue_preview_lines()
         fragments = []
         panel_prefix = ("fg:#64748b", "│ ")
@@ -423,6 +425,8 @@ class TurnQueueRunner:
             fragments.extend([panel_prefix, (style, status_line), ("", "\n")])
         if self.stable_prompt:
             for style, line in todo_lines:
+                fragments.extend([panel_prefix, (style, line), ("", "\n")])
+            for style, line in team_lines:
                 fragments.extend([panel_prefix, (style, line), ("", "\n")])
             if context_line:
                 fragments.extend([panel_prefix, (self.current_context_style(), context_line), ("", "\n")])
@@ -579,6 +583,27 @@ class TurnQueueRunner:
             else:
                 suffix = ""
             lines.append((style, f"{marker} {text}{suffix}"))
+        return lines
+
+    def _team_lines(self) -> list[tuple[str, str]]:
+        manager = getattr(self.runtime, "team_manager", None)
+        summaries = getattr(manager, "active_member_summaries", None)
+        formatter = getattr(manager, "_format_member_summary", None)
+        if not callable(summaries) or not callable(formatter):
+            return []
+        members = summaries()
+        if not members:
+            return []
+        lines: list[tuple[str, str]] = [("fg:#c4b5fd", f"team ({len(members)} active)")]
+        for member in members:
+            status = str(member.get("status", "")).strip()
+            if status == "working":
+                style = "fg:#fbbf24"
+            elif status == "idle":
+                style = "fg:#93c5fd"
+            else:
+                style = "fg:#cbd5e1"
+            lines.append((style, formatter(member)))
         return lines
 
     def _summarize_query(self, query: str) -> str:
@@ -810,6 +835,17 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     continue
                 if stripped == "/team":
                     print(runtime.team_manager.list_all())
+                    continue
+                if stripped == "/teamlog":
+                    active = runtime.team_manager.active_member_summaries()
+                    if not active:
+                        print("No active teammates. Use /team to inspect the full roster.")
+                    else:
+                        print("Use /teamlog <name>. Active teammates: " + ", ".join(member["name"] for member in active))
+                    continue
+                if stripped.startswith("/teamlog "):
+                    name = stripped.split(maxsplit=1)[1].strip()
+                    print(runtime.render_team_log(name))
                     continue
                 if stripped == "/inbox":
                     print(json.dumps(runtime.bus.read_inbox("lead"), indent=2, ensure_ascii=False))

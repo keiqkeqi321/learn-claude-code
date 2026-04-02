@@ -27,6 +27,7 @@ COMMAND_SPECS = [
     ("/compact", "Compact the current session context"),
     ("/tasks", "Show persistent tasks"),
     ("/team", "Show teammate roster and states"),
+    ("/teamlog", "Show the full message and tool history for a teammate"),
     ("/inbox", "Read the lead inbox"),
     ("/mcp", "Show configured MCP servers and tools"),
     ("/toollog", "Show recent tool logs or expand one by id"),

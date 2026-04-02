@@ -213,7 +213,7 @@ OpenAgent/
 1. Install the package in editable mode:
 
 ```bash
-pip install -e ./OpenAgent
+python -m pip install -e ./OpenAgent
 ```
 
 2. Copy the config file:
