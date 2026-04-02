@@ -4,6 +4,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from openagent.config.settings import load_settings, persist_provider_selection
 
@@ -12,21 +13,21 @@ class SettingsOverrideTests(unittest.TestCase):
     def test_load_settings_reads_provider_profiles_and_default_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "openagent.toml").write_text(
-                textwrap.dedent(
-                    """
-                    [providers]
-                    default = "anthropic"
+            home = root / "home"
+            self._write_workspace_config(
+                root,
+                """
+                [providers]
+                default = "anthropic"
 
-                    [providers.anthropic]
-                    models = ["glm-5", "claude-sonnet-4-5"]
-                    default_model = "glm-5"
-                    """
-                ).strip(),
-                encoding="utf-8",
+                [providers.anthropic]
+                models = ["glm-5", "claude-sonnet-4-5"]
+                default_model = "glm-5"
+                """,
             )
 
-            settings = load_settings(root)
+            with self._patched_home(home):
+                settings = load_settings(root)
 
         self.assertEqual(settings.provider.name, "anthropic")
         self.assertEqual(settings.provider.model, "glm-5")
@@ -35,28 +36,28 @@ class SettingsOverrideTests(unittest.TestCase):
     def test_load_settings_can_override_provider_and_model_from_configured_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "openagent.toml").write_text(
-                textwrap.dedent(
-                    """
-                    [providers]
-                    default = "anthropic"
+            home = root / "home"
+            self._write_workspace_config(
+                root,
+                """
+                [providers]
+                default = "anthropic"
 
-                    [providers.anthropic]
-                    models = ["glm-5", "claude-sonnet-4-5"]
-                    default_model = "glm-5"
+                [providers.anthropic]
+                models = ["glm-5", "claude-sonnet-4-5"]
+                default_model = "glm-5"
 
-                    [providers.openai]
-                    models = ["gpt-4.1", "gpt-4.1-mini"]
-                    default_model = "gpt-4.1"
-                    api_key = "sk-test"
-                    base_url = "https://openai.example/v1"
-                    organization = "org-test"
-                    """
-                ).strip(),
-                encoding="utf-8",
+                [providers.openai]
+                models = ["gpt-4.1", "gpt-4.1-mini"]
+                default_model = "gpt-4.1"
+                api_key = "sk-test"
+                base_url = "https://openai.example/v1"
+                organization = "org-test"
+                """,
             )
 
-            settings = load_settings(root, provider_override="openai", model_override="gpt-4.1-mini")
+            with self._patched_home(home):
+                settings = load_settings(root, provider_override="openai", model_override="gpt-4.1-mini")
 
         self.assertEqual(settings.provider.name, "openai")
         self.assertEqual(settings.provider.model, "gpt-4.1-mini")
@@ -68,24 +69,24 @@ class SettingsOverrideTests(unittest.TestCase):
     def test_load_settings_allows_custom_provider_name_to_map_to_openai_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "openagent.toml").write_text(
-                textwrap.dedent(
-                    """
-                    [providers]
-                    default = "openrouter"
+            home = root / "home"
+            self._write_workspace_config(
+                root,
+                """
+                [providers]
+                default = "openrouter"
 
-                    [providers.openrouter]
-                    provider_type = "openai"
-                    models = ["stepfun/step-3.5-flash"]
-                    default_model = "stepfun/step-3.5-flash"
-                    api_key = "sk-test"
-                    base_url = "https://openrouter.ai/api/v1"
-                    """
-                ).strip(),
-                encoding="utf-8",
+                [providers.openrouter]
+                provider_type = "openai"
+                models = ["stepfun/step-3.5-flash"]
+                default_model = "stepfun/step-3.5-flash"
+                api_key = "sk-test"
+                base_url = "https://openrouter.ai/api/v1"
+                """,
             )
 
-            settings = load_settings(root)
+            with self._patched_home(home):
+                settings = load_settings(root)
 
         self.assertEqual(settings.provider.name, "openrouter")
         self.assertEqual(settings.provider.provider_type, "openai")
@@ -95,43 +96,107 @@ class SettingsOverrideTests(unittest.TestCase):
     def test_load_settings_falls_back_to_builtin_default_when_profiles_not_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            settings = load_settings(root)
+            home = root / "home"
+            with self._patched_home(home):
+                settings = load_settings(root)
 
         self.assertEqual(settings.provider.name, "anthropic")
         self.assertEqual(settings.provider.provider_type, "anthropic")
         self.assertEqual(settings.provider.model, "claude-sonnet-4-5")
         self.assertEqual(settings.provider_profiles["anthropic"].models, ["claude-sonnet-4-5"])
 
+    def test_load_settings_merges_global_and_workspace_configs_with_workspace_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            home = root / "home"
+            self._write_global_config(
+                home,
+                """
+                [agent]
+                name = "GlobalAgent"
+
+                [providers]
+                default = "openai"
+
+                [providers.openai]
+                models = ["gpt-4.1", "gpt-4.1-mini"]
+                default_model = "gpt-4.1"
+                api_key = "global-key"
+
+                [runtime]
+                max_agent_rounds = 20
+                teammate_poll_interval_seconds = 9
+                """,
+            )
+            self._write_workspace_config(
+                root,
+                """
+                [agent]
+                name = "WorkspaceAgent"
+
+                [providers.openai]
+                default_model = "gpt-4.1-mini"
+
+                [runtime]
+                max_agent_rounds = 80
+                """,
+            )
+
+            with self._patched_home(home):
+                settings = load_settings(root)
+
+        self.assertEqual(settings.agent.name, "WorkspaceAgent")
+        self.assertEqual(settings.provider.name, "openai")
+        self.assertEqual(settings.provider.model, "gpt-4.1-mini")
+        self.assertEqual(settings.provider.api_key, "global-key")
+        self.assertEqual(settings.runtime.max_agent_rounds, 80)
+        self.assertEqual(settings.runtime.teammate_poll_interval_seconds, 9)
+        self.assertEqual(settings.provider_profiles["openai"].models, ["gpt-4.1", "gpt-4.1-mini"])
+
     def test_persist_provider_selection_updates_openagent_toml_and_roundtrips(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            config_path = root / "openagent.toml"
-            config_path.write_text(
-                textwrap.dedent(
-                    """
-                    [providers]
-                    default = "anthropic"
+            home = root / "home"
+            config_path = root / ".openagent" / "openagent.toml"
+            self._write_workspace_config(
+                root,
+                """
+                [providers]
+                default = "anthropic"
 
-                    [providers.anthropic]
-                    models = ["glm-5", "kimi-k2.5"]
-                    default_model = "glm-5"
+                [providers.anthropic]
+                models = ["glm-5", "kimi-k2.5"]
+                default_model = "glm-5"
 
-                    [providers.openai]
-                    models = ["gpt-4.1", "kimi-k2.5"]
-                    default_model = "gpt-4.1"
-                    """
-                ).strip()
-                + "\n",
-                encoding="utf-8",
+                [providers.openai]
+                models = ["gpt-4.1", "kimi-k2.5"]
+                default_model = "gpt-4.1"
+                """,
             )
-            settings = load_settings(root)
+            with self._patched_home(home):
+                settings = load_settings(root)
 
-            persist_provider_selection(settings, "openai", "kimi-k2.5")
-            reloaded = load_settings(root)
+                persist_provider_selection(settings, "openai", "kimi-k2.5")
+                reloaded = load_settings(root)
 
-        self.assertEqual(reloaded.provider.name, "openai")
-        self.assertEqual(reloaded.provider.model, "kimi-k2.5")
-        self.assertEqual(reloaded.provider_profiles["openai"].default_model, "kimi-k2.5")
+                self.assertEqual(reloaded.provider.name, "openai")
+                self.assertEqual(reloaded.provider.model, "kimi-k2.5")
+                self.assertEqual(reloaded.provider_profiles["openai"].default_model, "kimi-k2.5")
+                self.assertTrue(config_path.exists())
+
+    def _write_workspace_config(self, root: Path, content: str) -> None:
+        config_path = root / ".openagent" / "openagent.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
+
+    def _write_global_config(self, home: Path, content: str) -> None:
+        config_path = home / ".openagent" / "openagent.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
+
+    def _patched_home(self, home: Path):
+        home.mkdir(parents=True, exist_ok=True)
+        return patch("openagent.config.settings.Path.home", return_value=home)
 
 
 if __name__ == "__main__":

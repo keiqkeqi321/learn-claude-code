@@ -219,7 +219,8 @@ pip install -e ./OpenAgent
 2. Copy the config file:
 
 ```bash
-cp OpenAgent/openagent.toml.example openagent.toml
+mkdir -p .openagent
+cp OpenAgent/openagent.toml.example .openagent/openagent.toml
 ```
 
 3. Run a doctor check:
@@ -259,11 +260,12 @@ openagent -r
 
 OpenAgent reads configuration from:
 
-1. `openagent.toml` in the workspace root
+1. Global config at `~/.openagent/openagent.toml`
+2. Workspace config at `.openagent/openagent.toml`
 
 For ad-hoc switching, command-line `--provider` and `--model` overrides take precedence for the current invocation only.
 
-`openagent.toml` is optional. Missing values fall back to defaults from `openagent/config/settings.py`.
+Both config files are optional. OpenAgent deep-merges them at runtime, and workspace settings override global settings when the same key is defined.
 
 ### openagent.toml
 

@@ -445,7 +445,7 @@ class RuntimeToolOutputTests(unittest.TestCase):
             message = OpenAgentRuntime.switch_provider_model(runtime, "openai", "gpt-4.1-mini")
 
         self.assertIn("gpt-4.1-mini", message)
-        self.assertIn("saved it to openagent.toml", message)
+        self.assertIn("saved it to .openagent/openagent.toml", message)
         self.assertEqual(runtime.settings.provider.name, "openai")
         self.assertEqual(runtime.settings.provider.provider_type, "openai")
         self.assertEqual(runtime.settings.provider.model, "gpt-4.1-mini")

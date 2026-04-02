@@ -20,6 +20,31 @@ def _read_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def _merge_config(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _merge_config(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def global_config_path() -> Path:
+    return Path.home() / ".openagent" / "openagent.toml"
+
+
+def workspace_config_path(workspace_root: Path) -> Path:
+    return workspace_root / ".openagent" / "openagent.toml"
+
+
+def load_raw_config(workspace_root: Path) -> dict:
+    global_raw = _read_toml(global_config_path())
+    workspace_raw = _read_toml(workspace_config_path(workspace_root))
+    return _merge_config(global_raw, workspace_raw)
+
+
 def _toml_string(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
@@ -69,7 +94,8 @@ def _upsert_section_value(lines: list[str], section_name: str, key: str, value: 
 
 
 def persist_provider_selection(settings: AppSettings, provider_name: str, model: str) -> None:
-    config_path = settings.workspace_root / "openagent.toml"
+    config_path = workspace_config_path(settings.workspace_root)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     lines = config_path.read_text(encoding="utf-8").splitlines() if config_path.exists() else []
     _upsert_section_value(lines, "providers", "default", _toml_string(provider_name))
     _upsert_section_value(lines, f"providers.{provider_name}", "default_model", _toml_string(model))
@@ -255,8 +281,7 @@ def load_settings(
     model_override: str | None = None,
 ) -> AppSettings:
     root = Path(workspace_root or Path.cwd()).resolve()
-    config_path = root / "openagent.toml"
-    raw = _read_toml(config_path)
+    raw = load_raw_config(root)
     agent_raw = raw.get("agent", {})
     agent = AgentSettings(
         name=str(agent_raw.get("name", "OpenAgent")).strip() or "OpenAgent",

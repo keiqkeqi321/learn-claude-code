@@ -314,7 +314,7 @@ class OpenAgentRuntime:
         persist_provider_selection(self.settings, normalized_provider, normalized_model)
         return (
             f"Switched to provider '{self.settings.provider.name}' with model "
-            f"'{self.settings.provider.model}' and saved it to openagent.toml."
+            f"'{self.settings.provider.model}' and saved it to .openagent/openagent.toml."
         )
 
     def _register_core_tools(self, registry: ToolRegistry) -> None:
