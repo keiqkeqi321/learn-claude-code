@@ -13,6 +13,8 @@ from typing import Any
 
 from openagent.tools.registry import ToolDefinition
 
+READ_TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "gb18030", "cp936")
+
 
 def safe_path(workspace_root: Path, relative_path: str) -> Path:
     """解析并验证路径安全性.
@@ -33,6 +35,18 @@ def safe_path(workspace_root: Path, relative_path: str) -> Path:
     return path
 
 
+def _read_text_with_fallback(path: Path) -> str:
+    raw = path.read_bytes()
+    for encoding in READ_TEXT_ENCODINGS:
+        try:
+            text = raw.decode(encoding)
+            return text.replace("\r\n", "\n").replace("\r", "\n")
+        except UnicodeDecodeError:
+            continue
+    text = raw.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def read_file(ctx: Any, payload: dict[str, Any]) -> str:
     """读取文件内容.
 
@@ -45,7 +59,7 @@ def read_file(ctx: Any, payload: dict[str, Any]) -> str:
     """
     path = safe_path(ctx.runtime.settings.workspace_root, payload["path"])
     limit = payload.get("limit")
-    text = path.read_text(encoding="utf-8")
+    text = _read_text_with_fallback(path)
     lines = text.splitlines()
     if limit and limit < len(lines):
         lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
@@ -119,7 +133,7 @@ def grep_search(ctx: Any, payload: dict[str, Any]) -> str:
         if not (fnmatch.fnmatch(relative, glob_pattern) or fnmatch.fnmatch(candidate.name, glob_pattern)):
             continue
         try:
-            lines = candidate.read_text(encoding="utf-8", errors="ignore").splitlines()
+            lines = _read_text_with_fallback(candidate).splitlines()
         except Exception:
             continue
         for line_number, line in enumerate(lines, start=1):
@@ -166,7 +180,7 @@ def write_file(ctx: Any, payload: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = str(payload["content"])
     existed_before = path.exists()
-    previous = path.read_text(encoding="utf-8") if existed_before else ""
+    previous = _read_text_with_fallback(path) if existed_before else ""
     path.write_text(content, encoding="utf-8")
     added, removed = _line_diff_stats(previous, content)
     _record_file_change(
@@ -197,7 +211,7 @@ def edit_file(ctx: Any, payload: dict[str, Any]) -> dict[str, Any] | str:
     path = safe_path(ctx.runtime.settings.workspace_root, payload["path"])
     old_text = str(payload["old_text"])
     new_text = str(payload["new_text"])
-    content = path.read_text(encoding="utf-8")
+    content = _read_text_with_fallback(path)
     if old_text not in content:
         return f"Error: Text not found in {payload['path']}"
     updated = content.replace(old_text, new_text, 1)

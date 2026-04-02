@@ -74,6 +74,27 @@ class FilesystemToolTests(unittest.TestCase):
 
         self.assertEqual(result, "src/app.py")
 
+    def test_read_file_falls_back_for_gbk_encoded_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "demo.cs"
+            target.write_bytes("第一行\n第二行\n".encode("gb18030"))
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            from openagent.tools.filesystem import read_file
+
+            result = read_file(ctx, {"path": "demo.cs"})
+
+        self.assertEqual(result, "第一行\n第二行")
+
     def test_grep_search_returns_matching_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -93,6 +114,25 @@ class FilesystemToolTests(unittest.TestCase):
             result = grep_search(ctx, {"pattern": "beta", "glob": "*.py"})
 
         self.assertEqual(result, "src/app.py:2:beta")
+
+    def test_grep_search_reads_gbk_encoded_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "demo.cs"
+            target.write_bytes("装饰器\n对象池\n".encode("gb18030"))
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            result = grep_search(ctx, {"pattern": "对象池", "glob": "*.cs"})
+
+        self.assertEqual(result, "demo.cs:2:对象池")
 
     def test_tool_registry_applies_execution_mode_guard_before_write_handler(self) -> None:
         registry = ToolRegistry()
