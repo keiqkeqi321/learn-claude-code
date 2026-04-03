@@ -48,6 +48,87 @@ def _read_text_with_fallback(path: Path) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _nearest_existing_parent(path: Path, workspace_root: Path) -> Path:
+    candidate = path.parent
+    while candidate != candidate.parent:
+        if candidate.exists():
+            return candidate
+        if candidate == workspace_root:
+            break
+        candidate = candidate.parent
+    return workspace_root
+
+
+def _path_candidates_for_missing_file(workspace_root: Path, requested_path: str, missing_path: Path, limit: int = 5) -> list[Path]:
+    file_name = missing_path.name
+    if not file_name:
+        return []
+    search_root = _nearest_existing_parent(missing_path, workspace_root)
+    local_matches = [candidate for candidate in search_root.rglob(file_name) if candidate.is_file()]
+    if local_matches:
+        return local_matches[:limit]
+    workspace_matches = [candidate for candidate in workspace_root.rglob(file_name) if candidate.is_file()]
+    return workspace_matches[:limit]
+
+
+def _fuzzy_path_candidates_for_missing_file(workspace_root: Path, missing_path: Path, limit: int = 5) -> list[Path]:
+    file_name = missing_path.name
+    stem = missing_path.stem
+    if not file_name:
+        return []
+    search_root = _nearest_existing_parent(missing_path, workspace_root)
+    local_files = [candidate for candidate in search_root.rglob("*") if candidate.is_file()]
+    workspace_files = [candidate for candidate in workspace_root.rglob("*") if candidate.is_file()]
+    pool = local_files or workspace_files
+    if not pool:
+        return []
+    names = [candidate.name for candidate in pool]
+    matched_names = difflib.get_close_matches(file_name, names, n=limit, cutoff=0.45)
+    if not matched_names and stem:
+        stems = [candidate.stem for candidate in pool]
+        matched_stems = difflib.get_close_matches(stem, stems, n=limit, cutoff=0.45)
+        matched_names = []
+        for matched_stem in matched_stems:
+            for candidate in pool:
+                if candidate.stem == matched_stem:
+                    matched_names.append(candidate.name)
+    results: list[Path] = []
+    seen: set[Path] = set()
+    for matched_name in matched_names:
+        for candidate in pool:
+            if candidate.name != matched_name:
+                continue
+            if candidate in seen:
+                continue
+            results.append(candidate)
+            seen.add(candidate)
+            if len(results) >= limit:
+                return results
+    return results
+
+
+def _format_missing_file_message(
+    workspace_root: Path,
+    requested_path: str,
+    missing_path: Path,
+    candidates: list[Path],
+    *,
+    fuzzy: bool = False,
+) -> str:
+    normalized_request = requested_path.replace("\\", "/")
+    if not candidates:
+        return f"Error: File not found: {normalized_request}"
+    relative_candidates = [candidate.relative_to(workspace_root).as_posix() for candidate in candidates]
+    if len(relative_candidates) == 1:
+        return (
+            f"[auto-resolved path] requested {normalized_request}, "
+            f"using {relative_candidates[0]}"
+        )
+    lines = [f"Error: File not found: {normalized_request}", "Closest matches:" if not fuzzy else "Similar filenames:"]
+    lines.extend(f"- {candidate}" for candidate in relative_candidates)
+    return "\n".join(lines)
+
+
 def read_file(ctx: Any, payload: dict[str, Any]) -> str:
     """读取文件内容.
 
@@ -58,13 +139,33 @@ def read_file(ctx: Any, payload: dict[str, Any]) -> str:
     Returns:
         文件内容字符串。
     """
-    path = safe_path(ctx.runtime.settings.workspace_root, payload["path"])
+    workspace_root = ctx.runtime.settings.workspace_root
+    requested_path = str(payload["path"])
+    path = safe_path(workspace_root, requested_path)
     limit = payload.get("limit")
+    prefix = ""
+    if not path.exists() or not path.is_file():
+        candidates = _path_candidates_for_missing_file(workspace_root, requested_path, path)
+        if len(candidates) != 1:
+            if not candidates:
+                fuzzy_candidates = _fuzzy_path_candidates_for_missing_file(workspace_root, path)
+                if fuzzy_candidates:
+                    return _format_missing_file_message(
+                        workspace_root,
+                        requested_path,
+                        path,
+                        fuzzy_candidates,
+                        fuzzy=True,
+                    )
+            return _format_missing_file_message(workspace_root, requested_path, path, candidates)
+        path = candidates[0]
+        prefix = _format_missing_file_message(workspace_root, requested_path, path, candidates) + "\n\n"
     text = _read_text_with_fallback(path)
     lines = text.splitlines()
     if limit and limit < len(lines):
         lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
-    return "\n".join(lines)[: ctx.runtime.settings.runtime.max_tool_output_chars]
+    content = "\n".join(lines)
+    return f"{prefix}{content}"[: ctx.runtime.settings.runtime.max_tool_output_chars]
 
 
 def glob_search(ctx: Any, payload: dict[str, Any]) -> str:
@@ -244,7 +345,7 @@ def register_filesystem_tools(registry) -> None:
     registry.register(
         ToolDefinition(
             name="glob",
-            description="Search for files or directories by glob pattern inside the workspace.",
+            description="Search for files or directories by glob pattern inside the workspace. Prefer focused patterns like exact filenames, suffix filters such as `**/*.cs`, or narrowed directories. Avoid broad `**/*` enumeration unless you truly need a full tree dump.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -282,7 +383,7 @@ def register_filesystem_tools(registry) -> None:
     registry.register(
         ToolDefinition(
             name="read_file",
-            description="Read file contents.",
+            description="Read file contents. Before using this, confirm the exact path with a focused `glob` instead of guessing from broad listings. If the path is missing and there is exactly one filename match nearby, this tool will auto-resolve it.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -312,7 +413,7 @@ def register_filesystem_tools(registry) -> None:
     registry.register(
         ToolDefinition(
             name="edit_file",
-            description="Replace exact text in a file once.",
+            description="Replace exact text in a file once. Confirm the exact path with a focused `glob` before editing; do not guess paths from broad directory listings.",
             input_schema={
                 "type": "object",
                 "properties": {

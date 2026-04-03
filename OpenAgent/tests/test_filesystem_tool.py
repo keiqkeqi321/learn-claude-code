@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from openagent.tools.filesystem import edit_file, glob_search, grep_search, safe_path, write_file
+from openagent.tools.filesystem import edit_file, glob_search, grep_search, read_file, safe_path, write_file
 from openagent.tools.registry import ToolDefinition, ToolRegistry
 
 
@@ -137,11 +137,78 @@ class FilesystemToolTests(unittest.TestCase):
                 session=None,
             )
 
-            from openagent.tools.filesystem import read_file
-
             result = read_file(ctx, {"path": "demo.cs"})
 
         self.assertEqual(result, "第一行\n第二行")
+
+    def test_read_file_auto_resolves_unique_missing_filename_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "Runtime" / "UI"
+            target.mkdir(parents=True)
+            (target / "OrigamiLevelUI.cs").write_text("class OrigamiLevelUI {}\n", encoding="utf-8")
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            result = read_file(ctx, {"path": "Runtime/OrigamiLevelUI.cs"})
+
+        self.assertIn("[auto-resolved path]", result)
+        self.assertIn("using Runtime/UI/OrigamiLevelUI.cs", result)
+        self.assertIn("class OrigamiLevelUI {}", result)
+
+    def test_read_file_returns_candidate_list_when_missing_filename_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Runtime" / "UI").mkdir(parents=True)
+            (root / "Runtime" / "Legacy").mkdir(parents=True)
+            (root / "Runtime" / "UI" / "OrigamiLevelUI.cs").write_text("runtime\n", encoding="utf-8")
+            (root / "Runtime" / "Legacy" / "OrigamiLevelUI.cs").write_text("legacy\n", encoding="utf-8")
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            result = read_file(ctx, {"path": "Runtime/OrigamiLevelUI.cs"})
+
+        self.assertIn("Error: File not found: Runtime/OrigamiLevelUI.cs", result)
+        self.assertIn("Closest matches:", result)
+        self.assertIn("Runtime/UI/OrigamiLevelUI.cs", result)
+        self.assertIn("Runtime/Legacy/OrigamiLevelUI.cs", result)
+
+    def test_read_file_returns_similar_filename_candidates_when_no_exact_match_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "Runtime").mkdir(parents=True)
+            (root / "Runtime" / "OrigamiLevelConfig.cs").write_text("level\n", encoding="utf-8")
+            (root / "Runtime" / "OrigamiPaperConfig.cs").write_text("paper\n", encoding="utf-8")
+            ctx = SimpleNamespace(
+                runtime=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        workspace_root=root,
+                        runtime=SimpleNamespace(max_tool_output_chars=50000),
+                    )
+                ),
+                session=None,
+            )
+
+            result = read_file(ctx, {"path": "Runtime/OrigamiGameConfig.cs"})
+
+        self.assertIn("Error: File not found: Runtime/OrigamiGameConfig.cs", result)
+        self.assertIn("Similar filenames:", result)
+        self.assertIn("Runtime/OrigamiLevelConfig.cs", result)
+        self.assertIn("Runtime/OrigamiPaperConfig.cs", result)
 
     def test_grep_search_returns_matching_lines(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

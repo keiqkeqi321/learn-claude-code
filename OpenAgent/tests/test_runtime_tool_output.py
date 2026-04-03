@@ -216,6 +216,8 @@ class RuntimeToolOutputTests(unittest.TestCase):
         self.assertIn("Prefer dedicated tools over `bash`", prompt)
         self.assertIn("Use `glob` instead of shell file discovery commands", prompt)
         self.assertIn("Use `grep` instead of shell content search commands", prompt)
+        self.assertIn("Do not start with broad `glob` patterns such as `**/*`", prompt)
+        self.assertIn("Before `read_file` or `edit_file`, confirm the exact path", prompt)
         self.assertIn("Use `TodoWrite` to break down meaningful work", prompt)
         self.assertIn("Active provider: openai", prompt)
         self.assertIn("Active model: kimi-k2.5", prompt)

@@ -51,6 +51,9 @@ class SystemPromptBuilder:
             "- Use `write_file` instead of shell redirection or heredocs for file creation.\n"
             "- Use `glob` instead of shell file discovery commands such as `find`, `ls`, or recursive directory listings.\n"
             "- Use `grep` instead of shell content search commands such as `grep` or `rg`.\n"
+            "- Do not start with broad `glob` patterns such as `**/*` unless the user explicitly wants a full tree dump.\n"
+            "- Prefer precise `glob` patterns such as an exact filename, a suffix filter like `**/*.cs`, or a narrowed directory such as `Runtime/UI/**/*.cs`.\n"
+            "- Before `read_file` or `edit_file`, confirm the exact path with a focused `glob`; do not guess file paths from broad directory listings.\n"
             "- Reserve `bash` for system commands and terminal operations that truly require shell execution.\n"
             "- If you are unsure and a dedicated tool exists, use the dedicated tool first."
         )
