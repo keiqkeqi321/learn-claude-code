@@ -16,7 +16,7 @@ class TaskStore:
     """任务存储类.
 
     管理任务的创建、读取、更新和删除操作。
-    
+
     Attributes:
         root: 任务存储的根目录路径。
         meta_path: 元数据文件路径。
