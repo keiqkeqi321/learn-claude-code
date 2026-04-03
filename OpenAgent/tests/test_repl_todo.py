@@ -9,6 +9,7 @@ from unittest.mock import patch
 from openagent.cli.prompting import PROMPT_BORDER
 from openagent.cli.repl import (
     TurnQueueRunner,
+    _expand_skill_command,
     _handle_model_command,
     _handle_undo_command,
     _resolve_authorization_requests,
@@ -259,6 +260,17 @@ class ReplTodoTests(unittest.TestCase):
 
         self.assertTrue(requested)
         self.assertEqual(reasons, ["lead_interrupt"])
+
+    def test_expand_skill_command_wraps_loaded_skill_and_user_request(self) -> None:
+        runtime = SimpleNamespace(
+            skill_loader=SimpleNamespace(load=lambda name: f"<skill name=\"{name}\">body</skill>"),
+        )
+
+        expanded = _expand_skill_command(runtime, "/+unity inspect this folder")
+
+        self.assertIn("<skill name=\"unity\">body</skill>", expanded)
+        self.assertIn("The user explicitly requested skill 'unity'.", expanded)
+        self.assertTrue(expanded.endswith("inspect this folder"))
 
     def test_request_authorization_is_resolved_on_main_thread(self) -> None:
         runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))

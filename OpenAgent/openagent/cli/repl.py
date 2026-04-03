@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover - prompt_toolkit may be unavailable in fal
 
 
 READ_ONLY_COMMAND_PREFIXES = (
+    "/skills",
     "/tasks",
     "/team",
     "/teamlog",
@@ -50,6 +51,35 @@ READ_ONLY_COMMAND_PREFIXES = (
     "/help",
 )
 AUTHORIZATION_PROMPT_SENTINEL = "__openagent_authorization__"
+
+
+def _parse_skill_command(query: str) -> tuple[str, str] | None:
+    stripped = query.strip()
+    if not stripped.startswith("/+"):
+        return None
+    payload = stripped[2:].strip()
+    if not payload:
+        return None
+    parts = payload.split(maxsplit=1)
+    skill_name = parts[0].strip()
+    if not skill_name:
+        return None
+    remainder = parts[1].strip() if len(parts) > 1 else ""
+    return skill_name, remainder
+
+
+def _expand_skill_command(runtime, query: str) -> str:
+    parsed = _parse_skill_command(query)
+    if parsed is None:
+        return query
+    skill_name, remainder = parsed
+    skill_payload = runtime.skill_loader.load(skill_name)
+    if skill_payload.startswith("Error:"):
+        return skill_payload
+    instruction = f"The user explicitly requested skill '{skill_name}'. Follow it for this task."
+    if remainder:
+        return f"{skill_payload}\n\n{instruction}\n\n{remainder}"
+    return f"{skill_payload}\n\n{instruction}"
 
 
 def _assistant_tool_calls(content: object) -> list[dict[str, object]]:
@@ -736,6 +766,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
             on_interrupt=runner.request_interrupt,
             is_busy=runner.has_inflight_work,
             on_cycle_mode=runner.cycle_execution_mode,
+            skill_names_getter=lambda: runtime.skill_loader.names(),
         )
     except Exception:
         prompt_session = None
@@ -813,6 +844,9 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     runtime.compact_session(session)
                     print("[manual compact complete]")
                     continue
+                if stripped == "/skills":
+                    print(runtime.skill_loader.render_listing())
+                    continue
                 if stripped == "/undo":
                     if runner.has_inflight_work():
                         print("[busy; wait for queued responses before /undo]")
@@ -866,10 +900,15 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                 if stripped == "/help":
                     print("\n".join(f"{command} - {description}" for command, description in COMMAND_SPECS))
                     continue
-                if stripped.startswith("/") and not _is_read_only_command(stripped):
+                skill_command = _parse_skill_command(query)
+                expanded_query = _expand_skill_command(runtime, query)
+                if expanded_query.startswith("Error: Unknown skill '"):
+                    print(expanded_query)
+                    continue
+                if stripped.startswith("/") and skill_command is None and not _is_read_only_command(stripped):
                     print(f"[unknown command] {stripped}")
                     continue
-                was_active, queued_before = runner.enqueue(query)
+                was_active, queued_before = runner.enqueue(expanded_query)
                 if runner.stable_prompt and not was_active and queued_before == 0:
                     print_user_message(query)
                 if not runner.stable_prompt and not was_active and queued_before == 0:

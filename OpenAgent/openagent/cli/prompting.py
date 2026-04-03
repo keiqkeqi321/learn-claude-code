@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 import time
+from typing import Callable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application, get_app
@@ -25,6 +26,7 @@ COMMAND_SPECS = [
     ("/model", "Choose the active provider and model"),
     ("/undo", "Undo the most recent file change set"),
     ("/compact", "Compact the current session context"),
+    ("/skills", "Show currently available skills"),
     ("/tasks", "Show persistent tasks"),
     ("/team", "Show teammate roster and states"),
     ("/teamlog", "Show the full message and tool history for a teammate"),
@@ -86,8 +88,9 @@ class PathCandidate:
 
 
 class OpenAgentCompleter(Completer):
-    def __init__(self, workspace_root: Path):
+    def __init__(self, workspace_root: Path, skill_names_getter: Callable[[], list[str]] | None = None):
         self.workspace_root = workspace_root
+        self.skill_names_getter = skill_names_getter
         self._path_candidates: list[PathCandidate] = []
         self._last_scan_at = 0.0
 
@@ -112,6 +115,9 @@ class OpenAgentCompleter(Completer):
         return symbol, query
 
     def _command_completions(self, query: str):
+        if query.startswith("+"):
+            yield from self._skill_command_completions(query)
+            return
         lowered = query.lower()
         for command, description in COMMAND_SPECS:
             command_name = command[1:]
@@ -123,6 +129,22 @@ class OpenAgentCompleter(Completer):
                 start_position=-len(query),
                 display=command,
                 display_meta=description,
+            )
+
+    def _skill_command_completions(self, query: str):
+        getter = self.skill_names_getter
+        if getter is None:
+            return
+        lowered = query[1:].lower()
+        for skill_name in getter():
+            haystack = skill_name.lower()
+            if lowered and lowered not in haystack:
+                continue
+            yield Completion(
+                text=f"+{skill_name}",
+                start_position=-len(query),
+                display=f"/+{skill_name}",
+                display_meta="skill",
             )
 
     def _file_completions(self, query: str):
@@ -228,6 +250,7 @@ def create_prompt_session(
     on_interrupt=None,
     is_busy=None,
     on_cycle_mode=None,
+    skill_names_getter: Callable[[], list[str]] | None = None,
 ) -> PromptSession[str]:
     bindings = KeyBindings()
 
@@ -285,7 +308,7 @@ def create_prompt_session(
     return PromptSession(
         history=FileHistory(str(_history_file(workspace_root))),
         auto_suggest=AutoSuggestFromHistory(),
-        completer=OpenAgentCompleter(workspace_root),
+        completer=OpenAgentCompleter(workspace_root, skill_names_getter=skill_names_getter),
         complete_while_typing=True,
         reserve_space_for_menu=8,
         complete_style=CompleteStyle.MULTI_COLUMN,

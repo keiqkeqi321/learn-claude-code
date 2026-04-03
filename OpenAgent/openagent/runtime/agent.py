@@ -123,7 +123,7 @@ class OpenAgentRuntime:
         self.bus = MessageBus(self.inbox_store)
         self.team_store = TeamStore(settings.storage.team_dir)
         self.request_tracker = RequestTracker(settings.storage.requests_dir)
-        self.skill_loader = SkillLoader(settings.workspace_root / "skills")
+        self.skill_loader = SkillLoader.for_workspace(settings.workspace_root)
         self.todo_manager = TodoManager()
         self.background_manager = BackgroundManager(
             self.job_store,
