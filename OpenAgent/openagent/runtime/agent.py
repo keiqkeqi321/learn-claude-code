@@ -23,7 +23,13 @@ from openagent.mcp.registry import MCPRegistry
 from openagent.providers.anthropic_provider import AnthropicProvider
 from openagent.providers.base import LLMProvider
 from openagent.providers.openai_provider import OpenAIProvider
-from openagent.runtime.compact import CompactManager, ContextWindowUsage, estimate_payload_tokens, microcompact
+from openagent.runtime.compact import (
+    CompactManager,
+    ContextWindowUsage,
+    build_payload_messages,
+    estimate_payload_tokens,
+    should_auto_compact,
+)
 from openagent.runtime.execution_mode import (
     AUTHORIZATION_TOOL_NAME,
     DEFAULT_EXECUTION_MODE,
@@ -57,6 +63,8 @@ from openagent.tools.subagent import register_subagent_tool
 from openagent.tools.tasks import register_task_tools
 from openagent.tools.team import register_team_tools
 from openagent.tools.todo import TodoManager, register_todo_tool
+
+
 class OpenAgentRuntime:
     TOOL_VALUE_PREVIEW_CHARS = 90
     TOOL_RESULT_PREVIEW_CHARS = 60
@@ -350,6 +358,9 @@ class OpenAgentRuntime:
             getattr(self, "execution_mode", DEFAULT_EXECUTION_MODE),
         )
 
+    def _messages_for_model(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return build_payload_messages(messages)
+
     def context_window_usage(
         self,
         session: AgentSession,
@@ -360,6 +371,7 @@ class OpenAgentRuntime:
         messages = getattr(session, "messages", None)
         if not isinstance(messages, list):
             messages = []
+        payload_messages = self._messages_for_model(messages)
         try:
             system_prompt = self.build_system_prompt(actor=actor, role=role)
         except TypeError:
@@ -384,14 +396,14 @@ class OpenAgentRuntime:
         counter_name = "estimate"
         try:
             if provider is not None and callable(getattr(provider, "count_tokens", None)):
-                used_tokens = int(provider.count_tokens(system_prompt, messages, tools))
-                if used_tokens <= 0 and (system_prompt.strip() or messages or tools):
+                used_tokens = int(provider.count_tokens(system_prompt, payload_messages, tools))
+                if used_tokens <= 0 and (system_prompt.strip() or payload_messages or tools):
                     raise ValueError("Provider token counter returned a non-positive token count for a non-empty payload.")
                 counter_name = str(provider.token_counter_name())
             else:
                 raise RuntimeError("Provider token counting unavailable.")
         except Exception:
-            used_tokens = estimate_payload_tokens(system_prompt, messages, tools)
+            used_tokens = estimate_payload_tokens(system_prompt, payload_messages, tools)
 
         context_window_tokens = None
         if provider is not None and callable(getattr(provider, "context_window_tokens", None)):
@@ -617,9 +629,6 @@ class OpenAgentRuntime:
         try:
             for _ in range(self.settings.runtime.max_agent_rounds):
                 self._raise_if_interrupted(should_interrupt)
-                microcompact(session.messages)
-                if self.context_window_usage(session).used_tokens > self.settings.runtime.token_threshold:
-                    session.messages = self.compact_manager.auto_compact(session.id, session.messages)
                 background_notifications = self.background_manager.drain()
                 if background_notifications:
                     text = "\n".join(
@@ -629,12 +638,18 @@ class OpenAgentRuntime:
                 inbox = self.bus.read_inbox("lead")
                 if inbox:
                     session.messages.append(make_user_text_message(f"<inbox>{json.dumps(inbox, ensure_ascii=False, indent=2)}</inbox>"))
+                if should_auto_compact(
+                    self.context_window_usage(session),
+                    hard_threshold=self.settings.runtime.token_threshold,
+                ):
+                    session.messages = self.compact_manager.auto_compact(session.id, session.messages)
 
                 stream_flush_callback = getattr(text_callback, "finish", None) if text_callback is not None else None
+                payload_messages = self._messages_for_model(session.messages)
 
                 turn = self.complete(
                     self.build_system_prompt(),
-                    session.messages,
+                    payload_messages,
                     self.registry.schemas(),
                     text_callback=text_callback,
                     should_interrupt=should_interrupt,
