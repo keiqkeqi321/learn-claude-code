@@ -707,6 +707,28 @@ def _handle_undo_command(runtime, session) -> None:
     print(runtime.undo_last_turn(session))
 
 
+def _handle_skills_command(runtime) -> str | None:
+    entries = list(runtime.skill_loader.list_entries())
+    if not entries:
+        print("No skills.")
+        return None
+    items = [
+        (
+            str(entry["name"]),
+            f"{entry['name']} [{entry['scope']}] - {entry['description']}",
+        )
+        for entry in entries
+    ]
+    selected = choose_item_interactively(
+        "Choose Skill",
+        "Select a skill to apply to the next prompt.",
+        items,
+    )
+    if not selected:
+        return None
+    return f"/+{selected} "
+
+
 def _resolve_authorization_requests(runner: TurnQueueRunner) -> bool:
     pending = runner.drain_authorization_requests()
     if not pending:
@@ -760,6 +782,7 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
     runtime.authorization_request_handler = runner.request_authorization
     runtime.mode_switch_request_handler = runner.request_mode_switch
     prompt_session = None
+    pending_query_prefix = ""
     try:
         prompt_session = create_prompt_session(
             runtime.settings.workspace_root,
@@ -790,22 +813,33 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     continue
                 try:
                     if prompt_session is not None:
+                        prompt_kwargs = {
+                            "refresh_interval": 0.1,
+                            "bottom_toolbar": runner.bottom_toolbar,
+                        }
+                        if pending_query_prefix:
+                            prompt_kwargs["default"] = pending_query_prefix
                         query = prompt_session.prompt(
                             runner.prompt_message,
-                            refresh_interval=0.1,
-                            bottom_toolbar=runner.bottom_toolbar,
+                            **prompt_kwargs,
                         )
                     else:
+                        prefix = pending_query_prefix
                         if sys.stdout.isatty():
                             query = input(
                                 f"{runner.execution_mode_ansi_label()}\n"
                                 f"{runner.current_status_label()}\n"
-                                f"{fallback_prompt_message()}"
+                                f"{fallback_prompt_message()}{prefix}"
                             )
                         else:
                             query = input(
-                                f"{runner.execution_mode_label()}\n{runner.current_status_label()}\n{PROMPT_TEXT}"
+                                f"{runner.execution_mode_label()}\n"
+                                f"{runner.current_status_label()}\n"
+                                f"{PROMPT_TEXT}{prefix}"
                             )
+                        if prefix:
+                            query = prefix + query
+                    pending_query_prefix = ""
                 except (EOFError, KeyboardInterrupt):
                     print()
                     active, queued = runner.stats()
@@ -845,7 +879,9 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     print("[manual compact complete]")
                     continue
                 if stripped == "/skills":
-                    print(runtime.skill_loader.render_listing())
+                    skill_prefix = _handle_skills_command(runtime)
+                    if skill_prefix is not None:
+                        pending_query_prefix = skill_prefix
                     continue
                 if stripped == "/undo":
                     if runner.has_inflight_work():

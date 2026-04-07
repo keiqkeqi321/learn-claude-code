@@ -26,7 +26,7 @@ COMMAND_SPECS = [
     ("/model", "Choose the active provider and model"),
     ("/undo", "Undo the most recent file change set"),
     ("/compact", "Compact the current session context"),
-    ("/skills", "Show currently available skills"),
+    ("/skills", "Choose a skill to apply to the next prompt"),
     ("/tasks", "Show persistent tasks"),
     ("/team", "Show teammate roster and states"),
     ("/teamlog", "Show the full message and tool history for a teammate"),

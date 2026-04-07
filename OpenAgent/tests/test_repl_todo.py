@@ -11,6 +11,7 @@ from openagent.cli.repl import (
     TurnQueueRunner,
     _expand_skill_command,
     _handle_model_command,
+    _handle_skills_command,
     _handle_undo_command,
     _resolve_authorization_requests,
     _resolve_mode_switch_requests,
@@ -271,6 +272,34 @@ class ReplTodoTests(unittest.TestCase):
         self.assertIn("<skill name=\"unity\">body</skill>", expanded)
         self.assertIn("The user explicitly requested skill 'unity'.", expanded)
         self.assertTrue(expanded.endswith("inspect this folder"))
+
+    def test_skills_command_returns_selected_skill_prefix(self) -> None:
+        runtime = SimpleNamespace(
+            skill_loader=SimpleNamespace(
+                list_entries=lambda: [
+                    {
+                        "name": "Review",
+                        "description": "review code",
+                        "path": "D:/skills/Review/SKILL.md",
+                        "scope": "workspace",
+                    }
+                ]
+            )
+        )
+
+        with patch("openagent.cli.repl.choose_item_interactively", return_value="Review"):
+            prefix = _handle_skills_command(runtime)
+
+        self.assertEqual(prefix, "/+Review ")
+
+    def test_skills_command_prints_no_skills_when_empty(self) -> None:
+        runtime = SimpleNamespace(skill_loader=SimpleNamespace(list_entries=lambda: []))
+
+        with patch("builtins.print") as mock_print:
+            prefix = _handle_skills_command(runtime)
+
+        self.assertIsNone(prefix)
+        mock_print.assert_called_once_with("No skills.")
 
     def test_request_authorization_is_resolved_on_main_thread(self) -> None:
         runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
