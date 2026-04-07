@@ -56,7 +56,13 @@ class TaskStore:
             write_json(self.meta_path, meta)
             return task_id
 
-    def create(self, subject: str, description: str = "") -> dict[str, Any]:
+    def create(
+        self,
+        subject: str,
+        description: str = "",
+        *,
+        preferred_owner: str | None = None,
+    ) -> dict[str, Any]:
         """创建新任务.
 
         Args:
@@ -73,6 +79,7 @@ class TaskStore:
             "description": description,
             "status": "pending",
             "owner": None,
+            "preferred_owner": preferred_owner.strip() if isinstance(preferred_owner, str) and preferred_owner.strip() else None,
             "blockedBy": [],
             "blocks": [],
             "created_at": now_ts(),
@@ -104,6 +111,7 @@ class TaskStore:
         status: str | None = None,
         add_blocked_by: list[int] | None = None,
         add_blocks: list[int] | None = None,
+        preferred_owner: str | None | object = None,
     ) -> dict[str, Any] | None:
         task = self.get(task_id)
         if status == "deleted":
@@ -117,6 +125,10 @@ class TaskStore:
             task["blockedBy"] = sorted(set(task.get("blockedBy", []) + add_blocked_by))
         if add_blocks:
             task["blocks"] = sorted(set(task.get("blocks", []) + add_blocks))
+        if preferred_owner is not None:
+            task["preferred_owner"] = (
+                preferred_owner.strip() if isinstance(preferred_owner, str) and preferred_owner.strip() else None
+            )
         self.save(task)
         if status == "completed":
             for other in self.list_all():
@@ -132,9 +144,29 @@ class TaskStore:
         self.save(task)
         return task
 
+    def list_owned_open(self, owner: str) -> list[dict[str, Any]]:
+        owner_name = str(owner).strip()
+        if not owner_name:
+            return []
+        return [
+            task
+            for task in self.list_all()
+            if task.get("owner") == owner_name and task.get("status") in {"pending", "in_progress"}
+        ]
+
+    def has_open_task(self, owner: str) -> bool:
+        return bool(self.list_owned_open(owner))
+
     def list_claimable(self) -> list[dict[str, Any]]:
         return [
             task
             for task in self.list_all()
             if task.get("status") == "pending" and not task.get("owner") and not task.get("blockedBy")
         ]
+
+    def list_claimable_for(self, owner: str) -> list[dict[str, Any]]:
+        owner_name = str(owner).strip()
+        claimable = self.list_claimable()
+        preferred = [task for task in claimable if task.get("preferred_owner") == owner_name]
+        neutral = [task for task in claimable if not task.get("preferred_owner")]
+        return preferred + neutral

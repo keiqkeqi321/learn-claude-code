@@ -17,14 +17,23 @@ def _render_task_list(tasks: list[dict[str, Any]]) -> str:
             "completed": "[x]",
         }.get(task["status"], "[?]")
         owner = f" @{task['owner']}" if task.get("owner") else ""
+        preferred_owner = f" (prefers: {task['preferred_owner']})" if task.get("preferred_owner") else ""
         blocked = f" (blocked by: {task['blockedBy']})" if task.get("blockedBy") else ""
-        lines.append(f"{marker} #{task['id']}: {task['subject']}{owner}{blocked}")
+        lines.append(f"{marker} #{task['id']}: {task['subject']}{owner}{preferred_owner}{blocked}")
     return "\n".join(lines)
 
 
 def register_task_tools(registry, task_store) -> None:
     def create_task(ctx: Any, payload: dict[str, Any]) -> str:
-        return json.dumps(task_store.create(payload["subject"], payload.get("description", "")), indent=2, ensure_ascii=False)
+        return json.dumps(
+            task_store.create(
+                payload["subject"],
+                payload.get("description", ""),
+                preferred_owner=payload.get("preferred_owner"),
+            ),
+            indent=2,
+            ensure_ascii=False,
+        )
 
     def get_task(ctx: Any, payload: dict[str, Any]) -> str:
         return json.dumps(task_store.get(int(payload["task_id"])), indent=2, ensure_ascii=False)
@@ -35,6 +44,7 @@ def register_task_tools(registry, task_store) -> None:
             payload.get("status"),
             payload.get("add_blocked_by"),
             payload.get("add_blocks"),
+            payload.get("preferred_owner"),
         )
         if task is None:
             return f"Task {payload['task_id']} deleted"
@@ -57,6 +67,7 @@ def register_task_tools(registry, task_store) -> None:
                 "properties": {
                     "subject": {"type": "string"},
                     "description": {"type": "string"},
+                    "preferred_owner": {"type": "string"},
                 },
                 "required": ["subject"],
             },
@@ -89,6 +100,7 @@ def register_task_tools(registry, task_store) -> None:
                     },
                     "add_blocked_by": {"type": "array", "items": {"type": "integer"}},
                     "add_blocks": {"type": "array", "items": {"type": "integer"}},
+                    "preferred_owner": {"type": "string"},
                 },
                 "required": ["task_id"],
             },

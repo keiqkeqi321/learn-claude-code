@@ -25,21 +25,67 @@ class TeammateRuntimeManager:
         self._stop_events: dict[str, threading.Event] = {}
         self._stop_reasons: dict[str, str] = {}
         self._lock = threading.RLock()
-        self._repair_state()
+        self._restore_state()
 
-    def _repair_state(self) -> None:
+    def _restore_state(self) -> None:
+        resume_specs: list[tuple[str, str, str, list[dict]]] = []
         with self._lock:
             config = self.team_store.load()
             changed = False
             for member in config.get("members", []):
                 if member.get("status") in {"starting", "working", "idle"}:
-                    member["status"] = "shutdown"
-                    member["activity"] = "stale_on_boot"
-                    member["shutdown_reason"] = "runtime_restarted"
+                    name = str(member.get("name", "")).strip()
+                    role = str(member.get("role", "")).strip() or "teammate"
+                    prompt, messages = self._restore_prompt_and_messages(name)
+                    if not name or not prompt:
+                        member["status"] = "shutdown"
+                        member["activity"] = "stale_on_boot"
+                        member["shutdown_reason"] = "runtime_restarted"
+                        member["last_transition_at"] = now_ts()
+                        changed = True
+                        continue
+                    member["status"] = "starting"
+                    member["activity"] = "restoring_on_boot"
+                    member["shutdown_reason"] = None
                     member["last_transition_at"] = now_ts()
+                    member["last_activity_at"] = now_ts()
+                    member["current_tool_name"] = None
+                    member["current_tool_log_id"] = None
+                    resume_specs.append((name, role, prompt, messages))
                     changed = True
             if changed:
                 self.team_store.save(config)
+        for name, role, prompt, messages in resume_specs:
+            self._start_thread(name, role, prompt, initial_messages=messages, resumed=True)
+
+    def _restore_prompt_and_messages(self, name: str) -> tuple[str | None, list[dict]]:
+        prompt: str | None = None
+        messages: list[dict] = []
+        for entry in self.team_store.read_log(name):
+            entry_type = entry.get("type")
+            if entry_type == "session_started":
+                value = entry.get("prompt")
+                if isinstance(value, str) and value.strip():
+                    prompt = value
+                continue
+            if entry_type == "user_message":
+                content = entry.get("content")
+                source = entry.get("source")
+                if source == "prompt" and isinstance(content, str) and content.strip():
+                    prompt = prompt or content
+                if isinstance(content, str):
+                    messages.append({"role": "user", "content": content})
+                elif content is not None:
+                    messages.append({"role": "user", "content": json.dumps(content, ensure_ascii=False)})
+                continue
+            if entry_type == "assistant_message":
+                messages.append({"role": "assistant", "content": entry.get("content")})
+                continue
+            if entry_type == "tool_result_message":
+                messages.append({"role": "user", "content": entry.get("content", [])})
+        if not messages and prompt:
+            messages = [{"role": "user", "content": prompt}]
+        return prompt, messages
 
     def _load(self) -> dict:
         with self._lock:
@@ -140,7 +186,6 @@ class TeammateRuntimeManager:
         member = self._find(name)
         if member and member.get("status") not in {"idle", "shutdown"}:
             return f"Error: '{name}' is currently {member['status']}"
-        self._reset_stop_request(name)
         self._upsert_member(name, role, "starting", "booting")
         self.team_store.reset_log(
             name,
@@ -152,10 +197,22 @@ class TeammateRuntimeManager:
                 "prompt": prompt,
             },
         )
-        thread = threading.Thread(target=self._loop, args=(name, role, prompt), daemon=True)
+        self._start_thread(name, role, prompt)
+        return f"Spawned '{name}' (role: {role})"
+
+    def _start_thread(
+        self,
+        name: str,
+        role: str,
+        prompt: str,
+        *,
+        initial_messages: list[dict] | None = None,
+        resumed: bool = False,
+    ) -> None:
+        self._reset_stop_request(name)
+        thread = threading.Thread(target=self._loop, args=(name, role, prompt, initial_messages, resumed), daemon=True)
         thread.start()
         self.threads[name] = thread
-        return f"Spawned '{name}' (role: {role})"
 
     def _reset_stop_request(self, name: str) -> threading.Event:
         with self._lock:
@@ -215,14 +272,24 @@ class TeammateRuntimeManager:
             count += 1
         return count
 
-    def _loop(self, name: str, role: str, prompt: str) -> None:
-        messages = [{"role": "user", "content": prompt}]
+    def _loop(
+        self,
+        name: str,
+        role: str,
+        prompt: str,
+        initial_messages: list[dict] | None = None,
+        resumed: bool = False,
+    ) -> None:
+        messages = list(initial_messages) if initial_messages else [{"role": "user", "content": prompt}]
         registry = ToolRegistry()
         self.runtime.register_worker_tools(registry)
         system_prompt = self.runtime.build_system_prompt(actor=name, role=role)
         stop_event = self._reset_stop_request(name)
         self._update_member(name, status="working", activity="starting_work_loop")
-        self._append_log(name, "user_message", {"content": prompt, "source": "prompt"})
+        if resumed:
+            self._append_log(name, "session_resumed", {"reason": "runtime_restore", "message_count": len(messages)})
+        else:
+            self._append_log(name, "user_message", {"content": prompt, "source": "prompt"})
 
         try:
             while True:
@@ -297,7 +364,18 @@ class TeammateRuntimeManager:
                     if idle_requested:
                         break
 
-                self._update_member(name, status="idle", activity="idle_polling", current_task_id=None)
+                initial_owned_open = []
+                list_owned_open = getattr(self.task_store, "list_owned_open", None)
+                if callable(list_owned_open):
+                    initial_owned_open = list_owned_open(name) or []
+                retained_task_id = initial_owned_open[0]["id"] if initial_owned_open else None
+                initial_activity = "idle_waiting_on_owned_task" if initial_owned_open else "idle_polling"
+                self._update_member(
+                    name,
+                    status="idle",
+                    activity=initial_activity,
+                    current_task_id=retained_task_id,
+                )
                 resume = False
                 poll_total = max(self.runtime.settings.runtime.teammate_idle_timeout_seconds, 1)
                 poll_interval = max(self.runtime.settings.runtime.teammate_poll_interval_seconds, 1)
@@ -316,7 +394,23 @@ class TeammateRuntimeManager:
                         self._update_member(name, status="working", activity="resuming_from_inbox")
                         resume = True
                         break
-                    claimable = self.task_store.list_claimable()
+                    owned_open = []
+                    has_open_task = False
+                    list_owned_open = getattr(self.task_store, "list_owned_open", None)
+                    if callable(list_owned_open):
+                        owned_open = list_owned_open(name) or []
+                        has_open_task = bool(owned_open)
+                    else:
+                        has_open_task = bool(getattr(self.task_store, "has_open_task", lambda owner: False)(name))
+                    if has_open_task:
+                        current_task_id = owned_open[0]["id"] if owned_open else member.get("current_task_id") if (member := self._find(name)) else None
+                        self._update_member(name, status="idle", activity="idle_waiting_on_owned_task", current_task_id=current_task_id)
+                        continue
+                    list_claimable_for = getattr(self.task_store, "list_claimable_for", None)
+                    if callable(list_claimable_for):
+                        claimable = list_claimable_for(name)
+                    else:
+                        claimable = self.task_store.list_claimable()
                     if claimable:
                         task = claimable[0]
                         self.task_store.claim(task["id"], name)
