@@ -654,6 +654,11 @@ def _is_read_only_command(command: str) -> bool:
     return any(command == prefix or command.startswith(f"{prefix} ") for prefix in READ_ONLY_COMMAND_PREFIXES)
 
 
+def _is_exit_command(command: str) -> bool:
+    stripped = command.strip()
+    return stripped in {"q", "exit", "/exit"}
+
+
 def _handle_model_command(runtime) -> None:
     profiles = runtime.configured_provider_profiles()
     if not profiles:
@@ -858,7 +863,9 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                     _resolve_authorization_requests(runner)
                     continue
                 stripped = query.strip()
-                if not stripped or stripped in {"q", "exit", "/exit"}:
+                if not stripped:
+                    continue
+                if _is_exit_command(stripped):
                     active, queued = runner.stats()
                     if queued:
                         dropped = runner.close(drain=False)

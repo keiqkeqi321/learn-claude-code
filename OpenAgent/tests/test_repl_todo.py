@@ -10,6 +10,7 @@ from openagent.cli.prompting import PROMPT_BORDER
 from openagent.cli.repl import (
     TurnQueueRunner,
     _expand_skill_command,
+    _is_exit_command,
     _handle_model_command,
     _handle_skills_command,
     _handle_undo_command,
@@ -25,6 +26,14 @@ def _render_prompt_text(fragments) -> str:
 
 
 class ReplTodoTests(unittest.TestCase):
+    def test_is_exit_command_requires_explicit_exit_text(self) -> None:
+        self.assertFalse(_is_exit_command(""))
+        self.assertFalse(_is_exit_command("   "))
+        self.assertFalse(_is_exit_command("/compact"))
+        self.assertTrue(_is_exit_command("q"))
+        self.assertTrue(_is_exit_command(" exit "))
+        self.assertTrue(_is_exit_command("/exit"))
+
     def test_current_model_label_uses_active_provider_and_model(self) -> None:
         runtime = SimpleNamespace(settings=SimpleNamespace(provider=SimpleNamespace(name="anthropic", model="glm-5")))
         runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
