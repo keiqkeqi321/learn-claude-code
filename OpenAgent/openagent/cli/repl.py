@@ -192,6 +192,15 @@ class ModeSwitchRequest:
     response: dict[str, str] | None = None
 
 
+@dataclass(slots=True)
+class QueueTask:
+    id: int
+    kind: str
+    payload: str
+    echo_on_start: bool
+    preview: str
+
+
 class TurnQueueRunner:
     THINKING_PHRASES = (
         "AI is cooking",
@@ -213,7 +222,7 @@ class TurnQueueRunner:
         self.stable_prompt = stable_prompt
         self._execution_mode = normalize_execution_mode(getattr(runtime, "execution_mode", DEFAULT_EXECUTION_MODE))
         setattr(self.runtime, "execution_mode", self._execution_mode)
-        self._queue: Queue[tuple[int, str, bool] | None] = Queue()
+        self._queue: Queue[QueueTask | None] = Queue()
         self._lock = Lock()
         self._worker = Thread(target=self._worker_loop, name="openagent-chat-worker", daemon=True)
         self._active = False
@@ -243,6 +252,12 @@ class TurnQueueRunner:
         self._prompt_interrupter = interrupter
 
     def enqueue(self, query: str) -> tuple[bool, int]:
+        return self._enqueue_task("turn", query)
+
+    def enqueue_compact(self) -> tuple[bool, int]:
+        return self._enqueue_task("compact", "/compact")
+
+    def _enqueue_task(self, kind: str, payload: str) -> tuple[bool, int]:
         with self._lock:
             was_active = self._active
             queued_before = self._queued
@@ -250,9 +265,18 @@ class TurnQueueRunner:
             self._next_query_id += 1
             self._queued += 1
             show_queue_preview = was_active or queued_before > 0
+            preview = self._summarize_preview(kind, payload)
             if show_queue_preview:
-                self._queued_previews.append((query_id, self._summarize_query(query)))
-        self._queue.put((query_id, query, show_queue_preview))
+                self._queued_previews.append((query_id, preview))
+        self._queue.put(
+            QueueTask(
+                id=query_id,
+                kind=kind,
+                payload=payload,
+                echo_on_start=show_queue_preview and kind == "turn",
+                preview=preview,
+            )
+        )
         self._invalidate_ui()
         return was_active, queued_before
 
@@ -359,8 +383,7 @@ class TurnQueueRunner:
             if item is None:
                 self._queue.put(None)
                 break
-            query_id, _, _ = item
-            dropped_ids.add(query_id)
+            dropped_ids.add(item.id)
             dropped += 1
             self._queue.task_done()
         if dropped:
@@ -376,11 +399,10 @@ class TurnQueueRunner:
 
     def _worker_loop(self) -> None:
         while True:
-            query = self._queue.get()
-            if query is None:
+            task = self._queue.get()
+            if task is None:
                 self._queue.task_done()
                 return
-            query_id, query_text, echo_on_start = query
             with self._lock:
                 self._queued = max(0, self._queued - 1)
                 self._active = True
@@ -388,38 +410,43 @@ class TurnQueueRunner:
                 self._queued_previews = [
                     (preview_id, preview)
                     for preview_id, preview in self._queued_previews
-                    if preview_id != query_id
+                    if preview_id != task.id
                 ]
-            self._set_status("thinking")
-            if echo_on_start:
-                print_user_message(query_text)
-            streamer = ConsoleStreamer(
-                start_on_new_line=True,
-                line_buffered=self.stable_prompt,
-                on_first_output=None,
-            )
+            self._set_status("compacting" if task.kind == "compact" else "thinking")
             try:
                 with self._lock:
                     self._interrupt_requested = False
-                response = self.runtime.run_turn(
-                    self.session,
-                    query_text,
-                    text_callback=streamer,
-                    should_interrupt=self.should_interrupt,
-                )
-                if streamer.has_output:
-                    streamer.finish()
+                if task.kind == "compact":
+                    self.runtime.compact_session(self.session)
+                    print("[manual compact complete]")
                     print()
-                elif response:
-                    print()
-                    print(
-                        _prefix_first_line(
-                            render_markdown_text(response, ansi=sys.stdout.isatty()),
-                            _assistant_prefix(ansi=sys.stdout.isatty()),
-                        )
+                else:
+                    if task.echo_on_start:
+                        print_user_message(task.payload)
+                    streamer = ConsoleStreamer(
+                        start_on_new_line=True,
+                        line_buffered=self.stable_prompt,
+                        on_first_output=None,
                     )
-                    print()
-                self.runtime.print_last_turn_file_summary(self.session)
+                    response = self.runtime.run_turn(
+                        self.session,
+                        task.payload,
+                        text_callback=streamer,
+                        should_interrupt=self.should_interrupt,
+                    )
+                    if streamer.has_output:
+                        streamer.finish()
+                        print()
+                    elif response:
+                        print()
+                        print(
+                            _prefix_first_line(
+                                render_markdown_text(response, ansi=sys.stdout.isatty()),
+                                _assistant_prefix(ansi=sys.stdout.isatty()),
+                            )
+                        )
+                        print()
+                    self.runtime.print_last_turn_file_summary(self.session)
             except TurnInterrupted:
                 print()
                 print("[interrupted]")
@@ -564,6 +591,9 @@ class TurnQueueRunner:
         if status == "thinking":
             dots = int((time.monotonic() - changed_at) / self.THINKING_FRAME_SECONDS) % 4
             return thinking_phrase + ("." * dots)
+        if status == "compacting":
+            dots = int((time.monotonic() - changed_at) / self.THINKING_FRAME_SECONDS) % 4
+            return "compacting context" + ("." * dots)
         if status == "interrupting":
             return "interrupting"
         if status == "done":
@@ -636,8 +666,10 @@ class TurnQueueRunner:
             lines.append((style, formatter(member)))
         return lines
 
-    def _summarize_query(self, query: str) -> str:
-        single_line = " ".join(query.split())
+    def _summarize_preview(self, kind: str, payload: str) -> str:
+        if kind == "compact":
+            return "/compact"
+        single_line = " ".join(payload.split())
         if len(single_line) <= 48:
             return single_line
         return single_line[:45] + "..."
@@ -879,11 +911,10 @@ def run_repl(runtime, session, resumed: bool = False) -> int:
                         runner.close(drain=True)
                     break
                 if stripped == "/compact":
-                    if runner.has_inflight_work():
-                        print("[busy; wait for queued responses before /compact]")
-                        continue
-                    runtime.compact_session(session)
-                    print("[manual compact complete]")
+                    was_active, queued_before = runner.enqueue_compact()
+                    if (was_active or queued_before) and not runner.stable_prompt:
+                        ahead = queued_before + (1 if was_active else 0)
+                        print(f"[queued compact; {ahead} item(s) ahead]")
                     continue
                 if stripped == "/skills":
                     skill_prefix = _handle_skills_command(runtime)

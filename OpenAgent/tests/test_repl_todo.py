@@ -118,6 +118,15 @@ class ReplTodoTests(unittest.TestCase):
         self.assertNotIn("todo (", rendered)
         self.assertEqual(rendered, f"│ ⏵⏵ accept edits on  (Shift+Tab to cycle)\n{PROMPT_BORDER}\n❯ ")
 
+    def test_prompt_message_shows_compacting_status(self) -> None:
+        runner = TurnQueueRunner(SimpleNamespace(), SimpleNamespace(todo_items=[]), stable_prompt=True)
+        runner._status = "compacting"
+        runner._status_changed_at = 0.0
+
+        rendered = _render_prompt_text(runner.prompt_message())
+
+        self.assertIn("compacting context", rendered)
+
     def test_prompt_message_shows_active_teammates_before_mode_and_prompt(self) -> None:
         runtime = SimpleNamespace(
             team_manager=SimpleNamespace(
@@ -270,6 +279,22 @@ class ReplTodoTests(unittest.TestCase):
 
         self.assertTrue(requested)
         self.assertEqual(reasons, ["lead_interrupt"])
+
+    def test_compact_task_runs_before_queued_turn(self) -> None:
+        events: list[str] = []
+        runtime = SimpleNamespace(
+            compact_session=lambda session: events.append("compact"),
+            run_turn=lambda session, query, text_callback=None, should_interrupt=None: events.append(f"turn:{query}") or "Done.",
+            print_last_turn_file_summary=lambda session: False,
+        )
+        runner = TurnQueueRunner(runtime, SimpleNamespace(todo_items=[]), stable_prompt=True)
+        runner.start()
+
+        runner.enqueue_compact()
+        runner.enqueue("follow-up prompt")
+        runner.close(drain=True)
+
+        self.assertEqual(events, ["compact", "turn:follow-up prompt"])
 
     def test_expand_skill_command_wraps_loaded_skill_and_user_request(self) -> None:
         runtime = SimpleNamespace(
