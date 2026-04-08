@@ -3,15 +3,25 @@
 #  用法:
 #    powershell -File scripts\release.ps1 0.2.0
 #    powershell -File scripts\release.ps1 0.2.0 -Dry
-#    powershell -File scripts\release.ps1 0.2.0 -SkipPush
+#
+#  流程 (本地):
+#    1. 检查工作区干净
+#    2. 更新 VERSION → 同步版本号
+#    3. 更新 CHANGELOG
+#    4. git commit + tag
+#    5. git push (触发 CI 自动发布 PyPI + npm + GitHub Release)
+#
+#  CI 自动完成:
+#    - PyPI 发布
+#    - npm 发布
+#    - GitHub Release 创建
 # =============================================================
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$Version,
 
-    [switch]$Dry,
-    [switch]$SkipPush
+    [switch]$Dry
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,7 +72,7 @@ if (-not $Dry) {
 $today = Get-Date -Format "yyyy-MM-dd"
 if (-not $Dry) {
     $changelog = Get-Content "CHANGELOG.md" -Raw
-    $newEntry = "# Changelog`n`n## $Version ($today)`n`n- (请手动补充 changelog)`n"
+    $newEntry = "# Changelog`n`n## $Version ($today)`n`n- (请手动补充 changelog 条目)`n"
     $changelog = $changelog -replace "^# Changelog", $newEntry
     Set-Content "CHANGELOG.md" $changelog -NoNewline
     Write-Host "✓ CHANGELOG.md 已添加 $Version 条目" -ForegroundColor Green
@@ -76,44 +86,25 @@ if (-not $Dry) {
     Write-Host "✓ git commit + tag v$Version" -ForegroundColor Green
 }
 
-# ─── 7. 构建 PyPI 包 ─────────────────────────────────────────
+# ─── 7. 推送到 GitHub → 触发 CI ─────────────────────────────
 if (-not $Dry) {
-    if (Test-Path dist) { Remove-Item dist -Recurse -Force }
-    python -m build 2>&1 | Select-Object -Last 2
-    Write-Host "✓ 构建完成" -ForegroundColor Green
-}
-
-# ─── 8. 发布到 PyPI ──────────────────────────────────────────
-if (-not $Dry) {
-    Write-Host ""
-    Write-Host "📦 发布到 PyPI ..." -ForegroundColor Cyan
-    twine upload dist/* 2>&1
-    Write-Host "✓ PyPI 发布完成" -ForegroundColor Green
-}
-
-# ─── 9. 推送到 GitHub ────────────────────────────────────────
-if ((-not $Dry) -and (-not $SkipPush)) {
     Write-Host ""
     Write-Host "📤 推送到 GitHub ..." -ForegroundColor Cyan
     git push origin main
     git push origin "v$Version"
-    Write-Host "✓ 推送完成 (CI 将自动发布 npm)" -ForegroundColor Green
+    Write-Host "✓ 推送完成" -ForegroundColor Green
 }
 
 # ─── 完成 ─────────────────────────────────────────────────────
 Write-Host ""
 if ($Dry) {
-    Write-Host "👀 DRY RUN 完成 — 以上为将要执行的操作" -ForegroundColor Yellow
+    Write-Host "👀 DRY RUN 完成 — 去掉 -Dry 即可实际执行" -ForegroundColor Yellow
 } else {
-    Write-Host "✅ Somnia v$Version 发布成功！" -ForegroundColor Green
+    Write-Host "✅ v$Version 已推送！CI 将自动执行:" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  PyPI:  https://pypi.org/project/somnia/$Version/"
-    Write-Host "  安装:  pip install somnia"
-    Write-Host "  升级:  pip install --upgrade somnia"
-    if ($SkipPush) {
-        Write-Host ""
-        Write-Host "  ⚠️  未推送到远程，手动推送:" -ForegroundColor Yellow
-        Write-Host "    git push origin main"
-        Write-Host "    git push origin v$Version"
-    }
+    Write-Host "  📦 PyPI  →  https://pypi.org/project/somnia/$Version/"
+    Write-Host "  📦 npm   →  npm install somnia"
+    Write-Host "  📋 Release → GitHub Releases 页面"
+    Write-Host ""
+    Write-Host "  查看 CI 进度: GitHub → Actions 标签页"
 }
