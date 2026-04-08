@@ -63,7 +63,6 @@ jobs:
   publish-npm:
     runs-on: ubuntu-latest
     needs: verify-version
-    if: ${{ secrets.NPM_TOKEN != '' }}
     defaults:
       run:
         working-directory: OpenAgent/npm
@@ -81,12 +80,12 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true  # 没配 NPM_TOKEN 时不阻塞后续
 
   # ─── GitHub Release ────────────────────────────────────────
   create-release:
     runs-on: ubuntu-latest
     needs: [publish-pypi]
-    # 即使 npm 跳过也创建 Release
     if: always() && needs.publish-pypi.result == 'success'
     permissions:
       contents: write
