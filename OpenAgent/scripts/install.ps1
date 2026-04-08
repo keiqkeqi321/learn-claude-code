@@ -1,19 +1,14 @@
 # =============================================================
-#  OpenAgent — 一键安装脚本 (Windows PowerShell)
+#  Somnia — 一键安装脚本 (Windows PowerShell)
 # =============================================================
 #  用法:
-#    irm https://raw.githubusercontent.com/your-org/openagent/main/install.ps1 | iex
-#
-#  做什么:
-#    1. 检测 Python 3.11+，没有则提示安装方式
-#    2. pip install openagent
-#    3. 验证安装成功
+#    irm https://raw.githubusercontent.com/your-org/openagent/main/scripts/install.ps1 | iex
 # =============================================================
 
 $ErrorActionPreference = "Stop"
 
 Write-Host ""
-Write-Host "🤖 OpenAgent Installer" -ForegroundColor Cyan
+Write-Host "🤖 Somnia Installer" -ForegroundColor Cyan
 Write-Host ""
 
 # ─── Step 1: Find Python ─────────────────────────────────────
@@ -47,22 +42,22 @@ if (-not $pythonCmd) {
     exit 1
 }
 
-# ─── Step 2: Install openagent ────────────────────────────────
+# ─── Step 2: Install somnia ──────────────────────────────────
 Write-Host ""
-Write-Host "📦 Installing openagent ..." -ForegroundColor Cyan
-& $pythonCmd -m pip install --upgrade openagent
+Write-Host "📦 Installing somnia ..." -ForegroundColor Cyan
+& $pythonCmd -m pip install --upgrade somnia
 
 # ─── Step 3: Verify ──────────────────────────────────────────
 Write-Host ""
 try {
-    & $pythonCmd -m openagent --help | Out-Null
-    Write-Host "✅ OpenAgent installed successfully!" -ForegroundColor Green
+    & somnia --help | Out-Null
+    Write-Host "✅ Somnia installed successfully!" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Run:"
-    Write-Host "    openagent"              -ForegroundColor Cyan -NoNewline; Write-Host "              # interactive REPL"
-    Write-Host "    openagent chat 'hello'"  -ForegroundColor Cyan -NoNewline; Write-Host "  # one-shot"
+    Write-Host "    somnia"              -ForegroundColor Cyan -NoNewline; Write-Host "              # interactive REPL"
+    Write-Host "    somnia chat 'hello'"  -ForegroundColor Cyan -NoNewline; Write-Host "  # one-shot"
     Write-Host ""
 } catch {
-    Write-Host "⚠  Installation completed but verification failed." -ForegroundColor Yellow
+    Write-Host "⚠  Installation completed but command not in PATH." -ForegroundColor Yellow
     Write-Host "  Try: " -NoNewline; Write-Host "python -m openagent" -ForegroundColor Cyan
 }

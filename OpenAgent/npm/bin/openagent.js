@@ -24,7 +24,7 @@ function findPython() {
   return null;
 }
 
-console.log(`\n${BOLD}${CYAN}🤖 OpenAgent${RESET}\n`);
+console.log(`\n${BOLD}${CYAN}🤖 Somnia${RESET}\n`);
 
 // ─── Step 1: Check Python ────────────────────────────────────
 const py = findPython();
@@ -32,7 +32,7 @@ const py = findPython();
 if (!py) {
   console.error(
     `${RED}${BOLD}✗ Python not found${RESET}\n\n` +
-    `  OpenAgent requires ${BOLD}Python 3.11+${RESET}.\n\n` +
+    `  Somnia requires ${BOLD}Python 3.11+${RESET}.\n\n` +
     `  Install Python first:\n` +
     `    ${CYAN}https://www.python.org/downloads/${RESET}\n\n` +
     `  Or use your package manager:\n` +
@@ -53,14 +53,14 @@ try {
 } catch (_) {}
 
 if (!hasPkg) {
-  console.log(`${YELLOW}⚠${RESET}  openagent Python package not found, installing via pip ...`);
+  console.log(`${YELLOW}⚠${RESET}  somnia Python package not found, installing via pip ...`);
   try {
-    execSync(`${py.cmd} -m pip install openagent`, { stdio: "inherit" });
-    console.log(`${GREEN}✓${RESET} openagent installed!\n`);
+    execSync(`${py.cmd} -m pip install somnia`, { stdio: "inherit" });
+    console.log(`${GREEN}✓${RESET} somnia installed!\n`);
   } catch (_) {
     console.error(
-      `${RED}✗ Failed to install openagent via pip.${RESET}\n` +
-      `  Try manually: ${CYAN}${py.cmd} -m pip install openagent${RESET}\n`
+      `${RED}✗ Failed to install somnia via pip.${RESET}\n` +
+      `  Try manually: ${CYAN}${py.cmd} -m pip install somnia${RESET}\n`
     );
     process.exit(1);
   }

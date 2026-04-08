@@ -1,7 +1,7 @@
 "use strict";
 // =============================================================
-//  postinstall.js — automatically pip install openagent
-//  Runs after `npm install openagent` or `npx openagent`.
+//  postinstall.js — automatically pip install somnia
+//  Runs after `npm install somnia` or `npx somnia`.
 // =============================================================
 
 const { execSync } = require("child_process");
@@ -26,25 +26,25 @@ if (!pythonCmd) {
   console.log(
     "⚠️  Python not found. Skipping automatic pip install.\n" +
     "   Please install Python 3.11+ and then run:\n" +
-    "     pip install openagent"
+    "     pip install somnia"
   );
   process.exit(0);
 }
 
-// Check if openagent is already installed
+// Check if somnia is already installed
 try {
   execSync(`${pythonCmd} -c "import openagent"`, { stdio: "pipe" });
-  console.log("✅ openagent Python package is already installed.");
+  console.log("✅ somnia Python package is already installed.");
 } catch (_) {
-  console.log("📦 Installing openagent Python package via pip ...");
+  console.log("📦 Installing somnia Python package via pip ...");
   try {
-    execSync(`${pythonCmd} -m pip install openagent`, { stdio: "inherit" });
-    console.log("✅ openagent installed successfully!");
+    execSync(`${pythonCmd} -m pip install somnia`, { stdio: "inherit" });
+    console.log("✅ somnia installed successfully!");
   } catch (err) {
     console.error(
-      "⚠️  Failed to auto-install openagent via pip.\n" +
-      "   Please install manually: pip install openagent"
+      "⚠️  Failed to auto-install somnia via pip.\n" +
+      "   Please install manually: pip install somnia"
     );
-    process.exit(0); // Don't fail npm install
+    process.exit(0);
   }
 }

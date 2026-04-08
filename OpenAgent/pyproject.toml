@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openagent"
+name = "somnia"
 version = "0.1.0"
 description = "A modular AI agent CLI inspired by the full reference harness."
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -34,7 +34,7 @@ Repository = "https://github.com/your-org/openagent"
 Issues = "https://github.com/your-org/openagent/issues"
 
 [project.scripts]
-openagent = "openagent.cli.main:main"
+somnia = "openagent.cli.main:main"
 
 [tool.setuptools]
 include-package-data = true

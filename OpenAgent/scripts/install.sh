@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================
-#  OpenAgent — 一键安装脚本 (macOS / Linux)
+#  Somnia — 一键安装脚本 (macOS / Linux)
 # =============================================================
 #  用法:
 #    curl -fsSL https://raw.githubusercontent.com/your-org/openagent/main/install.sh | bash
-#
-#  做什么:
-#    1. 检测 Python 3.11+，没有则提示安装方式
-#    2. pip install openagent
-#    3. 验证安装成功
 # =============================================================
 
 set -euo pipefail
@@ -21,7 +16,7 @@ YELLOW='\033[33m'
 RESET='\033[0m'
 
 echo ""
-echo -e "${BOLD}${CYAN}🤖 OpenAgent Installer${RESET}"
+echo -e "${BOLD}${CYAN}🤖 Somnia Installer${RESET}"
 echo ""
 
 # ─── Step 1: Find Python ─────────────────────────────────────
@@ -68,21 +63,21 @@ if ! "$PYTHON_CMD" -m pip --version &>/dev/null; then
 fi
 echo -e "${GREEN}✓${RESET} pip available"
 
-# ─── Step 3: Install openagent ────────────────────────────────
+# ─── Step 3: Install somnia ──────────────────────────────────
 echo ""
-echo -e "${CYAN}📦 Installing openagent ...${RESET}"
-"$PYTHON_CMD" -m pip install --upgrade openagent
+echo -e "${CYAN}📦 Installing somnia ...${RESET}"
+"$PYTHON_CMD" -m pip install --upgrade somnia
 
 # ─── Step 4: Verify ──────────────────────────────────────────
 echo ""
-if "$PYTHON_CMD" -m openagent --help &>/dev/null; then
-  echo -e "${GREEN}${BOLD}✅ OpenAgent installed successfully!${RESET}"
+if command -v somnia &>/dev/null; then
+  echo -e "${GREEN}${BOLD}✅ Somnia installed successfully!${RESET}"
   echo ""
   echo "  Run:"
-  echo "    ${CYAN}openagent${RESET}              # interactive REPL"
-  echo "    ${CYAN}openagent chat 'hello'${RESET}  # one-shot"
+  echo "    ${CYAN}somnia${RESET}              # interactive REPL"
+  echo "    ${CYAN}somnia chat 'hello'${RESET}  # one-shot"
   echo ""
 else
-  echo -e "${YELLOW}⚠  Installation completed but verification failed.${RESET}"
+  echo -e "${YELLOW}⚠  Installation completed but command not in PATH.${RESET}"
   echo "  Try: ${CYAN}python -m openagent${RESET}"
 fi

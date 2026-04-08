@@ -43,12 +43,12 @@ if $TEST_MODE; then
   twine upload --repository testpypi dist/*
   echo ""
   echo "✅ Done! Install from TestPyPI with:"
-  echo "   pip install --index-url https://test.pypi.org/simple/ openagent"
+  echo "   pip install somnia"
 else
   echo ""
   echo "🚀 Uploading to PyPI ..."
   twine upload dist/*
   echo ""
   echo "✅ Done! Install with:"
-  echo "   pip install openagent"
+  echo "   pip install somnia"
 fi

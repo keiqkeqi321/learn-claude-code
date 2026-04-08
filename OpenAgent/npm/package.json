@@ -1,10 +1,10 @@
 {
-  "name": "openagent",
+  "name": "somnia",
   "version": "0.1.0",
   "description": "A modular AI agent CLI — npm wrapper that calls the Python openagent package",
   "main": "index.js",
   "bin": {
-    "openagent": "./bin/openagent.js"
+    "somnia": "./bin/openagent.js"
   },
   "scripts": {
     "postinstall": "node postinstall.js"

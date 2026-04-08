@@ -1,13 +1,15 @@
-# OpenAgent
+# Somnia (OpenAgent)
 
-OpenAgent is a modular AI agent CLI that ports the feature set of `agents/s_full.py` into a reusable project layout. It keeps the original loop-and-tools interaction model while adding clearer layering for providers, storage, MCP integration, and teammate orchestration.
+Somnia 是一个模块化的 AI Agent CLI 工具。名字来源于拉丁语"梦"（somnia），寓意用 AI 编织梦想。
+
+> 内部模块仍使用 `openagent` 作为 Python 包名，`somnia` 是发布到 PyPI / npm 的产品名。
 
 ## Prerequisites
 
 | 方式 | 需要的环境 |
 |------|-----------|
 | `pip install` | **Python 3.11+**（自带 pip） |
-| `npx openagent` | **Node.js 16+** + **Python 3.11+** |
+| `npx somnia` | **Node.js 16+** + **Python 3.11+** |
 | 一键脚本 | **curl / PowerShell**（脚本会检测并引导安装 Python） |
 | Docker | **Docker**（什么都不用装） |
 
@@ -19,15 +21,15 @@ OpenAgent is a modular AI agent CLI that ports the feature set of `agents/s_full
 ### 方式一：pip install（推荐）
 
 ```bash
-pip install openagent
+pip install somnia
 ```
 
 安装后直接使用：
 
 ```bash
-openagent              # 交互式 REPL
-openagent chat "hi"    # 单次对话
-openagent doctor       # 检查环境
+somnia              # 交互式 REPL
+somnia chat "hi"    # 单次对话
+somnia doctor       # 检查环境
 ```
 
 ### 方式二：一键安装脚本（自动检测 Python）
@@ -49,16 +51,16 @@ irm https://raw.githubusercontent.com/your-org/openagent/main/scripts/install.ps
 ### 方式三：npx（需要 Node.js + Python）
 
 ```bash
-npx openagent                # 直接运行，首次会自动 pip install
-npm install -g openagent     # 或全局安装
+npx somnia                # 直接运行，首次会自动 pip install
+npm install -g somnia     # 或全局安装
 ```
 
 ### 方式四：Docker（零依赖，什么都不用装）
 
 ```bash
-docker build -t openagent .
-docker run -it openagent                    # 交互式
-docker run -it openagent chat "hello"       # 单次对话
+docker build -t somnia .
+docker run -it somnia                    # 交互式
+docker run -it somnia chat "hello"       # 单次对话
 ```
 
 ### 从源码安装（开发者）
