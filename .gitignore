@@ -226,3 +226,6 @@ test_providers.py
 analysis/
 analysis_progress.md
 .openagent/
+
+# 2FA secrets
+**/get2fa.py
