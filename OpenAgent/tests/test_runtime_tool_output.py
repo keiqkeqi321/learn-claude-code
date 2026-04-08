@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -761,6 +763,98 @@ class RuntimeToolOutputTests(unittest.TestCase):
             OpenAgentRuntime.complete(runtime, "system", [], [], text_callback=None)
 
         self.assertEqual(attempts, ["called"])
+
+    def test_complete_interrupts_promptly_while_provider_call_is_blocked(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(max_tokens=1024))
+        started = Event()
+        release = Event()
+        interrupt_requested = Event()
+        result: dict[str, object] = {}
+
+        class _Provider:
+            def complete(self, **kwargs):
+                started.set()
+                release.wait(timeout=2)
+                return AssistantTurn(stop_reason="end_turn", text_blocks=["late"])
+
+        runtime.provider = _Provider()
+
+        def run_complete() -> None:
+            try:
+                result["value"] = OpenAgentRuntime.complete(
+                    runtime,
+                    "system",
+                    [],
+                    [],
+                    text_callback=None,
+                    should_interrupt=interrupt_requested.is_set,
+                )
+            except Exception as exc:
+                result["value"] = exc
+
+        worker = Thread(target=run_complete)
+        started_at = time.monotonic()
+        worker.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        interrupt_requested.set()
+        worker.join(timeout=0.5)
+        release.set()
+
+        self.assertFalse(worker.is_alive())
+        self.assertLess(time.monotonic() - started_at, 1.0)
+        self.assertIsInstance(result.get("value"), TurnInterrupted)
+
+    def test_complete_blocks_late_stream_output_after_interrupt(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(max_tokens=1024))
+        started = Event()
+        release = Event()
+        callback_attempted = Event()
+        interrupt_requested = Event()
+        streamed: list[str] = []
+        result: dict[str, object] = {}
+
+        class _Provider:
+            def complete(self, **kwargs):
+                started.set()
+                release.wait(timeout=2)
+                callback = kwargs.get("text_callback")
+                if callback is not None:
+                    try:
+                        callback("late output")
+                    finally:
+                        callback_attempted.set()
+                return AssistantTurn(stop_reason="end_turn", text_blocks=["late output"])
+
+        runtime.provider = _Provider()
+
+        def run_complete() -> None:
+            try:
+                result["value"] = OpenAgentRuntime.complete(
+                    runtime,
+                    "system",
+                    [],
+                    [],
+                    text_callback=streamed.append,
+                    should_interrupt=interrupt_requested.is_set,
+                )
+            except Exception as exc:
+                result["value"] = exc
+
+        worker = Thread(target=run_complete)
+        worker.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        interrupt_requested.set()
+        worker.join(timeout=0.5)
+        release.set()
+        self.assertTrue(callback_attempted.wait(timeout=1))
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(streamed, [])
+        self.assertIsInstance(result.get("value"), TurnInterrupted)
 
     def test_agent_loop_stops_turn_after_request_authorization_and_replans(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

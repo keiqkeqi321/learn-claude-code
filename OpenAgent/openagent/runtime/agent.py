@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Event, Thread
 from typing import Any
 
 from openagent.collaboration.bus import MessageBus
@@ -72,6 +74,7 @@ class OpenAgentRuntime:
     MAX_UNDO_TURNS = 10
     TURN_BOUNDARY_TOOL_NAMES = {AUTHORIZATION_TOOL_NAME, MODE_SWITCH_TOOL_NAME}
     WORKSPACE_PERMISSIONS_FILE = "permissions.json"
+    PROVIDER_POLL_INTERVAL_SECONDS = 0.1
     _ansi_output_enabled: bool | None = None
     DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
         "You are {name}, a top-rated AI assistant.\n"
@@ -570,31 +573,86 @@ class OpenAgentRuntime:
         should_interrupt=None,
     ):
         last_error: Exception | None = None
-        callback = text_callback
-        if text_callback is not None or should_interrupt is not None:
-            def interruptible_callback(text: str) -> None:
-                self._raise_if_interrupted(should_interrupt)
-                if text_callback is not None:
-                    text_callback(text)
-                self._raise_if_interrupted(should_interrupt)
-
-            callback = interruptible_callback
         for _ in range(3):
             self._raise_if_interrupted(should_interrupt)
             try:
-                return self.provider.complete(
+                if should_interrupt is None:
+                    return self.provider.complete(
+                        system_prompt=system_prompt,
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=self.settings.provider.max_tokens,
+                        text_callback=text_callback,
+                        stop_checker=None,
+                    )
+                return self._complete_with_interrupt_polling(
                     system_prompt=system_prompt,
                     messages=messages,
                     tools=tools,
-                    max_tokens=self.settings.provider.max_tokens,
-                    text_callback=callback,
-                    stop_checker=should_interrupt,
+                    text_callback=text_callback,
+                    should_interrupt=should_interrupt,
                 )
             except TurnInterrupted:
                 raise
             except Exception as exc:
                 last_error = exc
         raise RuntimeError(f"Provider call failed after retries: {last_error}")
+
+    def _complete_with_interrupt_polling(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        text_callback=None,
+        should_interrupt=None,
+    ):
+        cancel_event = Event()
+        result_queue: Queue[tuple[str, Any]] = Queue(maxsize=1)
+
+        def provider_stop_checker() -> bool:
+            if cancel_event.is_set():
+                return True
+            if should_interrupt is not None and should_interrupt():
+                cancel_event.set()
+                return True
+            return False
+
+        def interruptible_callback(text: str) -> None:
+            if provider_stop_checker():
+                raise TurnInterrupted("Interrupted by user.")
+            if text_callback is not None:
+                text_callback(text)
+            if provider_stop_checker():
+                raise TurnInterrupted("Interrupted by user.")
+
+        def run_provider() -> None:
+            try:
+                turn = self.provider.complete(
+                    system_prompt=system_prompt,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=self.settings.provider.max_tokens,
+                    text_callback=interruptible_callback if (text_callback is not None or should_interrupt is not None) else text_callback,
+                    stop_checker=provider_stop_checker,
+                )
+                result_queue.put(("result", turn))
+            except BaseException as exc:  # pragma: no cover - exercised via caller assertions
+                result_queue.put(("error", exc))
+
+        worker = Thread(target=run_provider, name="openagent-provider-call", daemon=True)
+        worker.start()
+
+        while True:
+            try:
+                kind, value = result_queue.get(timeout=self.PROVIDER_POLL_INTERVAL_SECONDS)
+            except Empty:
+                if provider_stop_checker():
+                    raise TurnInterrupted("Interrupted by user.")
+                continue
+            if kind == "error":
+                raise value
+            return value
 
     def run_subagent(self, prompt: str, agent_type: str = "Explore") -> str:
         return self._subagent_runner().run_subagent(prompt, agent_type)
