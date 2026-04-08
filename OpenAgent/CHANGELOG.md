@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0 (2026-04-08)
+
+- (请手动补充 changelog 条目)
+
+
 ## 0.1.0
 
 - Initial OpenAgent MVP implementation.
