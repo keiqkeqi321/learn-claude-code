@@ -80,6 +80,13 @@ if (-not $Dry) {
 
 # ─── 6. Git commit + tag ─────────────────────────────────────
 if (-not $Dry) {
+    # 删除已有同名 tag（如果有）
+    $existingTag = git tag -l "v$Version" 2>$null
+    if ($existingTag) {
+        git tag -d "v$Version" 2>$null
+        Write-Host "⚠ 删除已有本地 tag v$Version" -ForegroundColor Yellow
+    }
+
     git add VERSION openagent/__init__.py npm/package.json CHANGELOG.md
     git commit -m "release: v$Version"
     git tag "v$Version"
@@ -89,10 +96,39 @@ if (-not $Dry) {
 # ─── 7. 推送到 GitHub → 触发 CI ─────────────────────────────
 if (-not $Dry) {
     Write-Host ""
-    Write-Host "📤 推送到 GitHub ..." -ForegroundColor Cyan
-    git push origin main
-    git push origin "v$Version"
-    Write-Host "✓ 推送完成" -ForegroundColor Green
+    Write-Host "📤 推送到远程仓库 ..." -ForegroundColor Cyan
+
+    # 自动检测远程名（优先 github.com，其次 origin，再取第一个）
+    $remote = $null
+    $remotes = (git remote) -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    
+    foreach ($r in $remotes) {
+        $url = (git remote get-url $r 2>$null)
+        if ($url -match "github") {
+            $remote = $r
+            break
+        }
+    }
+    if (-not $remote) {
+        foreach ($r in $remotes) {
+            if ($r -eq "origin") { $remote = $r; break }
+        }
+    }
+    if (-not $remote -and $remotes) {
+        $remote = $remotes[0]
+    }
+
+    if (-not $remote) {
+        Write-Host "✗ 找不到 git remote，请手动推送:" -ForegroundColor Red
+        Write-Host "  git push <remote> main"
+        Write-Host "  git push <remote> v$Version"
+        exit 1
+    }
+
+    $branch = (git branch --show-current)
+    git push $remote $branch
+    git push $remote "v$Version"
+    Write-Host "✓ 已推送到 $remote ($branch + v$Version)" -ForegroundColor Green
 }
 
 # ─── 完成 ─────────────────────────────────────────────────────
