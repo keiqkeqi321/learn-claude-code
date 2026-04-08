@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 from typing import Any
@@ -97,6 +98,36 @@ def _encoding_for_openai_model(model: str):
     return tiktoken.get_encoding("cl100k_base")
 
 
+def _parse_error_payload(details: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(details)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _is_overloaded_error(status_code: int, details: str) -> bool:
+    payload = _parse_error_payload(details)
+    error_payload = payload.get("error", {}) if isinstance(payload.get("error"), dict) else {}
+    error_code = str(error_payload.get("code", "")).strip().lower()
+    message = str(error_payload.get("message", "")).strip().lower()
+    detail_text = details.strip().lower()
+    overload_markers = (
+        "访问量过大",
+        "too many requests",
+        "rate limit",
+        "overload",
+        "overloaded",
+        "capacity",
+        "busy",
+    )
+    if status_code == 429:
+        return True
+    if error_code in {"1305", "rate_limit_exceeded", "overloaded"}:
+        return True
+    return any(marker in message or marker in detail_text for marker in overload_markers)
+
+
 class OpenAIProvider(LLMProvider):
     def __init__(self, settings: ProviderSettings):
         self.settings = settings
@@ -158,9 +189,13 @@ class OpenAIProvider(LLMProvider):
                     body = self._read_streaming_response(response, text_callback, stop_checker=stop_checker)
         except urllib.error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="replace")
-            raise ProviderError(f"OpenAI request failed: {exc.code} {details}") from exc
+            raise ProviderError(
+                f"OpenAI request failed: {exc.code} {details}",
+                retryable=not _is_overloaded_error(exc.code, details) and exc.code >= 500,
+            ) from exc
         except urllib.error.URLError as exc:
-            raise ProviderError(f"OpenAI request failed: {exc}") from exc
+            retryable = isinstance(getattr(exc, "reason", None), TimeoutError | socket.timeout) or "timed out" in str(exc).lower()
+            raise ProviderError(f"OpenAI request failed: {exc}", retryable=retryable) from exc
 
         choice = body["choices"][0]
         message = choice["message"]

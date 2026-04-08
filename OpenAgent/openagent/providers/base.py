@@ -10,6 +10,10 @@ from openagent.runtime.messages import AssistantTurn, NormalizedMessage
 class ProviderError(RuntimeError):
     """Raised when a provider request fails."""
 
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
 
 TextCallback = Callable[[str], None]
 StopChecker = Callable[[], bool]

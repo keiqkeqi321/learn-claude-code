@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import tempfile
 import time
+import urllib.error
 import unittest
 from pathlib import Path
 from threading import Event, Thread
@@ -10,6 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from openagent.config.models import ModelTraits, ProviderProfileSettings, ProviderSettings
+from openagent.providers.base import ProviderError
+from openagent.providers.openai_provider import OpenAIProvider
 from openagent.runtime.agent import OpenAgentRuntime, TurnInterrupted
 from openagent.runtime.compact import ContextWindowUsage
 from openagent.runtime.messages import AssistantTurn, ToolCall
@@ -763,6 +766,70 @@ class RuntimeToolOutputTests(unittest.TestCase):
             OpenAgentRuntime.complete(runtime, "system", [], [], text_callback=None)
 
         self.assertEqual(attempts, ["called"])
+
+    def test_complete_does_not_retry_non_retryable_provider_error(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(max_tokens=1024))
+        attempts: list[str] = []
+
+        class _Provider:
+            def complete(self, **kwargs):
+                attempts.append("called")
+                raise ProviderError("provider overloaded", retryable=False)
+
+        runtime.provider = _Provider()
+
+        with self.assertRaisesRegex(RuntimeError, "provider overloaded"):
+            OpenAgentRuntime.complete(runtime, "system", [], [], text_callback=None)
+
+        self.assertEqual(attempts, ["called"])
+
+    def test_complete_retries_retryable_provider_error(self) -> None:
+        runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)
+        runtime.settings = SimpleNamespace(provider=SimpleNamespace(max_tokens=1024))
+        attempts: list[str] = []
+
+        class _Provider:
+            def complete(self, **kwargs):
+                attempts.append("called")
+                raise ProviderError("temporary timeout", retryable=True)
+
+        runtime.provider = _Provider()
+
+        with self.assertRaisesRegex(RuntimeError, "temporary timeout"):
+            OpenAgentRuntime.complete(runtime, "system", [], [], text_callback=None)
+
+        self.assertEqual(attempts, ["called", "called", "called"])
+
+    def test_openai_provider_marks_overload_error_as_non_retryable(self) -> None:
+        provider = OpenAIProvider(
+            ProviderSettings(
+                name="openai",
+                provider_type="openai",
+                model="qwen3.5-plus",
+                api_key="test-key",
+                base_url="https://example.com/v1",
+                timeout_seconds=30,
+            )
+        )
+        overload_body = (
+            '{"error":{"code":"1305","message":"该模型当前访问量过大，请您稍后再试"},'
+            '"request_id":"req-1"}'
+        ).encode("utf-8")
+        http_error = urllib.error.HTTPError(
+            url="https://example.com/v1/chat/completions",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=io.BytesIO(overload_body),
+        )
+
+        with patch("urllib.request.urlopen", side_effect=http_error):
+            with self.assertRaises(ProviderError) as context:
+                provider.complete("system", [], [], max_tokens=1024)
+
+        self.assertFalse(context.exception.retryable)
+        self.assertIn("1305", str(context.exception))
 
     def test_complete_interrupts_promptly_while_provider_call_is_blocked(self) -> None:
         runtime = OpenAgentRuntime.__new__(OpenAgentRuntime)

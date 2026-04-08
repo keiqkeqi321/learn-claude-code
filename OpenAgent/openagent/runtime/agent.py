@@ -23,7 +23,7 @@ from openagent.config.models import AppSettings, ProviderProfileSettings, Provid
 from openagent.config.settings import _materialize_provider, persist_provider_selection
 from openagent.mcp.registry import MCPRegistry
 from openagent.providers.anthropic_provider import AnthropicProvider
-from openagent.providers.base import LLMProvider
+from openagent.providers.base import LLMProvider, ProviderError
 from openagent.providers.openai_provider import OpenAIProvider
 from openagent.runtime.compact import (
     CompactManager,
@@ -573,7 +573,9 @@ class OpenAgentRuntime:
         should_interrupt=None,
     ):
         last_error: Exception | None = None
-        for _ in range(3):
+        attempts = 0
+        for attempt in range(1, 4):
+            attempts = attempt
             self._raise_if_interrupted(should_interrupt)
             try:
                 if should_interrupt is None:
@@ -594,9 +596,18 @@ class OpenAgentRuntime:
                 )
             except TurnInterrupted:
                 raise
+            except ProviderError as exc:
+                last_error = exc
+                if not getattr(exc, "retryable", True):
+                    break
             except Exception as exc:
                 last_error = exc
-        raise RuntimeError(f"Provider call failed after retries: {last_error}")
+                break
+        if last_error is None:
+            raise RuntimeError("Provider call failed.")
+        if attempts <= 1:
+            raise RuntimeError(f"Provider call failed: {last_error}")
+        raise RuntimeError(f"Provider call failed after {attempts} attempts: {last_error}")
 
     def _complete_with_interrupt_polling(
         self,
