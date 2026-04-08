@@ -2,6 +2,73 @@
 
 OpenAgent is a modular AI agent CLI that ports the feature set of `agents/s_full.py` into a reusable project layout. It keeps the original loop-and-tools interaction model while adding clearer layering for providers, storage, MCP integration, and teammate orchestration.
 
+## Prerequisites
+
+| 方式 | 需要的环境 |
+|------|-----------|
+| `pip install` | **Python 3.11+**（自带 pip） |
+| `npx openagent` | **Node.js 16+** + **Python 3.11+** |
+| 一键脚本 | **curl / PowerShell**（脚本会检测并引导安装 Python） |
+| Docker | **Docker**（什么都不用装） |
+
+> 💡 如果你还没有 Python，去 [python.org](https://www.python.org/downloads/) 下载安装，
+> 或用包管理器：`brew install python@3.12` / `winget install Python.Python.3.12`
+
+## Installation
+
+### 方式一：pip install（推荐）
+
+```bash
+pip install openagent
+```
+
+安装后直接使用：
+
+```bash
+openagent              # 交互式 REPL
+openagent chat "hi"    # 单次对话
+openagent doctor       # 检查环境
+```
+
+### 方式二：一键安装脚本（自动检测 Python）
+
+macOS / Linux：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/your-org/openagent/main/scripts/install.sh | bash
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/your-org/openagent/main/scripts/install.ps1 | iex
+```
+
+> 脚本会自动检测 Python 3.11+，没有的话会提示你如何安装。
+
+### 方式三：npx（需要 Node.js + Python）
+
+```bash
+npx openagent                # 直接运行，首次会自动 pip install
+npm install -g openagent     # 或全局安装
+```
+
+### 方式四：Docker（零依赖，什么都不用装）
+
+```bash
+docker build -t openagent .
+docker run -it openagent                    # 交互式
+docker run -it openagent chat "hello"       # 单次对话
+```
+
+### 从源码安装（开发者）
+
+```bash
+git clone https://github.com/your-org/openagent.git
+cd openagent
+pip install -e .
+```
+
 ## Included in this MVP
 
 - Interactive CLI with chat, run, tasks, compact, and doctor flows
